@@ -1,0 +1,1479 @@
+// !$*UTF8*$!
+{
+	archiveVersion = 1;
+	classes = {
+	};
+	objectVersion = 77;
+	objects = {
+
+/* Begin PBXBuildFile section */
+		68801ED02ECBD54100A57696 /* PaceRunner Watch App.app in Embed Watch Content */ = {isa = PBXBuildFile; fileRef = 68801ECF2ECBD54100A57696 /* PaceRunner Watch App.app */; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
+		68EDEF502ECE7CF000D54C20 /* PaceRunnerShared in Frameworks */ = {isa = PBXBuildFile; productRef = 68EDEF4F2ECE7CF000D54C20 /* PaceRunnerShared */; };
+		68EDEF522ECE7D0100D54C20 /* PaceRunnerShared in Frameworks */ = {isa = PBXBuildFile; productRef = 68EDEF512ECE7D0100D54C20 /* PaceRunnerShared */; };
+/* End PBXBuildFile section */
+
+/* Begin PBXContainerItemProxy section */
+		68801EBA2ECBD54100A57696 /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = 68801EA42ECBD54000A57696 /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = 68801EAB2ECBD54000A57696;
+			remoteInfo = PaceRunner;
+		};
+		68801EC42ECBD54100A57696 /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = 68801EA42ECBD54000A57696 /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = 68801EAB2ECBD54000A57696;
+			remoteInfo = PaceRunner;
+		};
+		68801ED12ECBD54100A57696 /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = 68801EA42ECBD54000A57696 /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = 68801ECE2ECBD54100A57696;
+			remoteInfo = "PaceRunner Watch App";
+		};
+		68801EDF2ECBD54200A57696 /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = 68801EA42ECBD54000A57696 /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = 68801ECE2ECBD54100A57696;
+			remoteInfo = "PaceRunner Watch App";
+		};
+		68801EE92ECBD54200A57696 /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = 68801EA42ECBD54000A57696 /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = 68801ECE2ECBD54100A57696;
+			remoteInfo = "PaceRunner Watch App";
+		};
+		68801F162ECBD63100A57696 /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = 68801EA42ECBD54000A57696 /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = 68801F082ECBD63000A57696;
+			remoteInfo = "PaceRunner-iOS";
+		};
+		68801F202ECBD63100A57696 /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = 68801EA42ECBD54000A57696 /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = 68801F082ECBD63000A57696;
+			remoteInfo = "PaceRunner-iOS";
+		};
+/* End PBXContainerItemProxy section */
+
+/* Begin PBXCopyFilesBuildPhase section */
+		68801EF52ECBD54200A57696 /* Embed Watch Content */ = {
+			isa = PBXCopyFilesBuildPhase;
+			buildActionMask = 2147483647;
+			dstPath = "$(CONTENTS_FOLDER_PATH)/Watch";
+			dstSubfolderSpec = 16;
+			files = (
+				68801ED02ECBD54100A57696 /* PaceRunner Watch App.app in Embed Watch Content */,
+			);
+			name = "Embed Watch Content";
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		68801F582ECBD73100A57696 /* Embed Frameworks */ = {
+			isa = PBXCopyFilesBuildPhase;
+			buildActionMask = 2147483647;
+			dstPath = "";
+			dstSubfolderSpec = 10;
+			files = (
+			);
+			name = "Embed Frameworks";
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXCopyFilesBuildPhase section */
+
+/* Begin PBXFileReference section */
+		68801EAC2ECBD54000A57696 /* PaceRunner.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = PaceRunner.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		68801EB92ECBD54100A57696 /* PaceRunnerTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = PaceRunnerTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
+		68801EC32ECBD54100A57696 /* PaceRunnerUITests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = PaceRunnerUITests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
+		68801ECF2ECBD54100A57696 /* PaceRunner Watch App.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = "PaceRunner Watch App.app"; sourceTree = BUILT_PRODUCTS_DIR; };
+		68801EDE2ECBD54200A57696 /* PaceRunner Watch AppTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = "PaceRunner Watch AppTests.xctest"; sourceTree = BUILT_PRODUCTS_DIR; };
+		68801EE82ECBD54200A57696 /* PaceRunner Watch AppUITests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = "PaceRunner Watch AppUITests.xctest"; sourceTree = BUILT_PRODUCTS_DIR; };
+		68801F092ECBD63000A57696 /* PaceRunner-iOS.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = "PaceRunner-iOS.app"; sourceTree = BUILT_PRODUCTS_DIR; };
+		68801F152ECBD63100A57696 /* PaceRunner-iOSTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = "PaceRunner-iOSTests.xctest"; sourceTree = BUILT_PRODUCTS_DIR; };
+		68801F1F2ECBD63100A57696 /* PaceRunner-iOSUITests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = "PaceRunner-iOSUITests.xctest"; sourceTree = BUILT_PRODUCTS_DIR; };
+/* End PBXFileReference section */
+
+/* Begin PBXFileSystemSynchronizedRootGroup section */
+		68801EAE2ECBD54000A57696 /* PaceRunner */ = {
+			isa = PBXFileSystemSynchronizedRootGroup;
+			path = PaceRunner;
+			sourceTree = "<group>";
+		};
+		68801EBC2ECBD54100A57696 /* PaceRunnerTests */ = {
+			isa = PBXFileSystemSynchronizedRootGroup;
+			path = PaceRunnerTests;
+			sourceTree = "<group>";
+		};
+		68801EC62ECBD54100A57696 /* PaceRunnerUITests */ = {
+			isa = PBXFileSystemSynchronizedRootGroup;
+			path = PaceRunnerUITests;
+			sourceTree = "<group>";
+		};
+		68801ED32ECBD54100A57696 /* PaceRunner Watch App */ = {
+			isa = PBXFileSystemSynchronizedRootGroup;
+			path = "PaceRunner Watch App";
+			sourceTree = "<group>";
+		};
+		68801EE12ECBD54200A57696 /* PaceRunner Watch AppTests */ = {
+			isa = PBXFileSystemSynchronizedRootGroup;
+			path = "PaceRunner Watch AppTests";
+			sourceTree = "<group>";
+		};
+		68801EEB2ECBD54200A57696 /* PaceRunner Watch AppUITests */ = {
+			isa = PBXFileSystemSynchronizedRootGroup;
+			path = "PaceRunner Watch AppUITests";
+			sourceTree = "<group>";
+		};
+		68801F0A2ECBD63000A57696 /* PaceRunner-iOS */ = {
+			isa = PBXFileSystemSynchronizedRootGroup;
+			path = "PaceRunner-iOS";
+			sourceTree = "<group>";
+		};
+		68801F182ECBD63100A57696 /* PaceRunner-iOSTests */ = {
+			isa = PBXFileSystemSynchronizedRootGroup;
+			path = "PaceRunner-iOSTests";
+			sourceTree = "<group>";
+		};
+		68801F222ECBD63100A57696 /* PaceRunner-iOSUITests */ = {
+			isa = PBXFileSystemSynchronizedRootGroup;
+			path = "PaceRunner-iOSUITests";
+			sourceTree = "<group>";
+		};
+/* End PBXFileSystemSynchronizedRootGroup section */
+
+/* Begin PBXFrameworksBuildPhase section */
+		68801EA92ECBD54000A57696 /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				68EDEF502ECE7CF000D54C20 /* PaceRunnerShared in Frameworks */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		68801EB62ECBD54100A57696 /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		68801EC02ECBD54100A57696 /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		68801ECC2ECBD54100A57696 /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				68EDEF522ECE7D0100D54C20 /* PaceRunnerShared in Frameworks */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		68801EDB2ECBD54200A57696 /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		68801EE52ECBD54200A57696 /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		68801F062ECBD63000A57696 /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		68801F122ECBD63100A57696 /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		68801F1C2ECBD63100A57696 /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXFrameworksBuildPhase section */
+
+/* Begin PBXGroup section */
+		68801EA32ECBD54000A57696 = {
+			isa = PBXGroup;
+			children = (
+				68801EAE2ECBD54000A57696 /* PaceRunner */,
+				68801EBC2ECBD54100A57696 /* PaceRunnerTests */,
+				68801EC62ECBD54100A57696 /* PaceRunnerUITests */,
+				68801ED32ECBD54100A57696 /* PaceRunner Watch App */,
+				68801EE12ECBD54200A57696 /* PaceRunner Watch AppTests */,
+				68801EEB2ECBD54200A57696 /* PaceRunner Watch AppUITests */,
+				68801F0A2ECBD63000A57696 /* PaceRunner-iOS */,
+				68801F182ECBD63100A57696 /* PaceRunner-iOSTests */,
+				68801F222ECBD63100A57696 /* PaceRunner-iOSUITests */,
+				68801F532ECBD73100A57696 /* Frameworks */,
+				68801EAD2ECBD54000A57696 /* Products */,
+			);
+			sourceTree = "<group>";
+		};
+		68801EAD2ECBD54000A57696 /* Products */ = {
+			isa = PBXGroup;
+			children = (
+				68801EAC2ECBD54000A57696 /* PaceRunner.app */,
+				68801EB92ECBD54100A57696 /* PaceRunnerTests.xctest */,
+				68801EC32ECBD54100A57696 /* PaceRunnerUITests.xctest */,
+				68801ECF2ECBD54100A57696 /* PaceRunner Watch App.app */,
+				68801EDE2ECBD54200A57696 /* PaceRunner Watch AppTests.xctest */,
+				68801EE82ECBD54200A57696 /* PaceRunner Watch AppUITests.xctest */,
+				68801F092ECBD63000A57696 /* PaceRunner-iOS.app */,
+				68801F152ECBD63100A57696 /* PaceRunner-iOSTests.xctest */,
+				68801F1F2ECBD63100A57696 /* PaceRunner-iOSUITests.xctest */,
+			);
+			name = Products;
+			sourceTree = "<group>";
+		};
+		68801F532ECBD73100A57696 /* Frameworks */ = {
+			isa = PBXGroup;
+			children = (
+			);
+			name = Frameworks;
+			sourceTree = "<group>";
+		};
+/* End PBXGroup section */
+
+/* Begin PBXNativeTarget section */
+		68801EAB2ECBD54000A57696 /* PaceRunner */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = 68801EF62ECBD54200A57696 /* Build configuration list for PBXNativeTarget "PaceRunner" */;
+			buildPhases = (
+				68801EA82ECBD54000A57696 /* Sources */,
+				68801EA92ECBD54000A57696 /* Frameworks */,
+				68801EAA2ECBD54000A57696 /* Resources */,
+				68801EF52ECBD54200A57696 /* Embed Watch Content */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+				68EDEF4E2ECE7CAC00D54C20 /* PBXTargetDependency */,
+				68801ED22ECBD54100A57696 /* PBXTargetDependency */,
+			);
+			fileSystemSynchronizedGroups = (
+				68801EAE2ECBD54000A57696 /* PaceRunner */,
+			);
+			name = PaceRunner;
+			packageProductDependencies = (
+				68EDEF4F2ECE7CF000D54C20 /* PaceRunnerShared */,
+			);
+			productName = PaceRunner;
+			productReference = 68801EAC2ECBD54000A57696 /* PaceRunner.app */;
+			productType = "com.apple.product-type.application";
+		};
+		68801EB82ECBD54100A57696 /* PaceRunnerTests */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = 68801EF92ECBD54200A57696 /* Build configuration list for PBXNativeTarget "PaceRunnerTests" */;
+			buildPhases = (
+				68801EB52ECBD54100A57696 /* Sources */,
+				68801EB62ECBD54100A57696 /* Frameworks */,
+				68801EB72ECBD54100A57696 /* Resources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+				68801EBB2ECBD54100A57696 /* PBXTargetDependency */,
+			);
+			fileSystemSynchronizedGroups = (
+				68801EBC2ECBD54100A57696 /* PaceRunnerTests */,
+			);
+			name = PaceRunnerTests;
+			packageProductDependencies = (
+			);
+			productName = PaceRunnerTests;
+			productReference = 68801EB92ECBD54100A57696 /* PaceRunnerTests.xctest */;
+			productType = "com.apple.product-type.bundle.unit-test";
+		};
+		68801EC22ECBD54100A57696 /* PaceRunnerUITests */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = 68801EFC2ECBD54200A57696 /* Build configuration list for PBXNativeTarget "PaceRunnerUITests" */;
+			buildPhases = (
+				68801EBF2ECBD54100A57696 /* Sources */,
+				68801EC02ECBD54100A57696 /* Frameworks */,
+				68801EC12ECBD54100A57696 /* Resources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+				68801EC52ECBD54100A57696 /* PBXTargetDependency */,
+			);
+			fileSystemSynchronizedGroups = (
+				68801EC62ECBD54100A57696 /* PaceRunnerUITests */,
+			);
+			name = PaceRunnerUITests;
+			packageProductDependencies = (
+			);
+			productName = PaceRunnerUITests;
+			productReference = 68801EC32ECBD54100A57696 /* PaceRunnerUITests.xctest */;
+			productType = "com.apple.product-type.bundle.ui-testing";
+		};
+		68801ECE2ECBD54100A57696 /* PaceRunner Watch App */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = 68801EF22ECBD54200A57696 /* Build configuration list for PBXNativeTarget "PaceRunner Watch App" */;
+			buildPhases = (
+				68801ECB2ECBD54100A57696 /* Sources */,
+				68801ECC2ECBD54100A57696 /* Frameworks */,
+				68801ECD2ECBD54100A57696 /* Resources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+			);
+			fileSystemSynchronizedGroups = (
+				68801ED32ECBD54100A57696 /* PaceRunner Watch App */,
+			);
+			name = "PaceRunner Watch App";
+			packageProductDependencies = (
+				68EDEF512ECE7D0100D54C20 /* PaceRunnerShared */,
+			);
+			productName = "PaceRunner Watch App";
+			productReference = 68801ECF2ECBD54100A57696 /* PaceRunner Watch App.app */;
+			productType = "com.apple.product-type.application";
+		};
+		68801EDD2ECBD54200A57696 /* PaceRunner Watch AppTests */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = 68801EFF2ECBD54200A57696 /* Build configuration list for PBXNativeTarget "PaceRunner Watch AppTests" */;
+			buildPhases = (
+				68801EDA2ECBD54200A57696 /* Sources */,
+				68801EDB2ECBD54200A57696 /* Frameworks */,
+				68801EDC2ECBD54200A57696 /* Resources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+				68801EE02ECBD54200A57696 /* PBXTargetDependency */,
+			);
+			fileSystemSynchronizedGroups = (
+				68801EE12ECBD54200A57696 /* PaceRunner Watch AppTests */,
+			);
+			name = "PaceRunner Watch AppTests";
+			packageProductDependencies = (
+			);
+			productName = "PaceRunner Watch AppTests";
+			productReference = 68801EDE2ECBD54200A57696 /* PaceRunner Watch AppTests.xctest */;
+			productType = "com.apple.product-type.bundle.unit-test";
+		};
+		68801EE72ECBD54200A57696 /* PaceRunner Watch AppUITests */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = 68801F022ECBD54200A57696 /* Build configuration list for PBXNativeTarget "PaceRunner Watch AppUITests" */;
+			buildPhases = (
+				68801EE42ECBD54200A57696 /* Sources */,
+				68801EE52ECBD54200A57696 /* Frameworks */,
+				68801EE62ECBD54200A57696 /* Resources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+				68801EEA2ECBD54200A57696 /* PBXTargetDependency */,
+			);
+			fileSystemSynchronizedGroups = (
+				68801EEB2ECBD54200A57696 /* PaceRunner Watch AppUITests */,
+			);
+			name = "PaceRunner Watch AppUITests";
+			packageProductDependencies = (
+			);
+			productName = "PaceRunner Watch AppUITests";
+			productReference = 68801EE82ECBD54200A57696 /* PaceRunner Watch AppUITests.xctest */;
+			productType = "com.apple.product-type.bundle.ui-testing";
+		};
+		68801F082ECBD63000A57696 /* PaceRunner-iOS */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = 68801F272ECBD63100A57696 /* Build configuration list for PBXNativeTarget "PaceRunner-iOS" */;
+			buildPhases = (
+				68801F052ECBD63000A57696 /* Sources */,
+				68801F062ECBD63000A57696 /* Frameworks */,
+				68801F072ECBD63000A57696 /* Resources */,
+				68801F582ECBD73100A57696 /* Embed Frameworks */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+			);
+			fileSystemSynchronizedGroups = (
+				68801F0A2ECBD63000A57696 /* PaceRunner-iOS */,
+			);
+			name = "PaceRunner-iOS";
+			packageProductDependencies = (
+			);
+			productName = "PaceRunner-iOS";
+			productReference = 68801F092ECBD63000A57696 /* PaceRunner-iOS.app */;
+			productType = "com.apple.product-type.application";
+		};
+		68801F142ECBD63100A57696 /* PaceRunner-iOSTests */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = 68801F2A2ECBD63100A57696 /* Build configuration list for PBXNativeTarget "PaceRunner-iOSTests" */;
+			buildPhases = (
+				68801F112ECBD63100A57696 /* Sources */,
+				68801F122ECBD63100A57696 /* Frameworks */,
+				68801F132ECBD63100A57696 /* Resources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+				68801F172ECBD63100A57696 /* PBXTargetDependency */,
+			);
+			fileSystemSynchronizedGroups = (
+				68801F182ECBD63100A57696 /* PaceRunner-iOSTests */,
+			);
+			name = "PaceRunner-iOSTests";
+			packageProductDependencies = (
+			);
+			productName = "PaceRunner-iOSTests";
+			productReference = 68801F152ECBD63100A57696 /* PaceRunner-iOSTests.xctest */;
+			productType = "com.apple.product-type.bundle.unit-test";
+		};
+		68801F1E2ECBD63100A57696 /* PaceRunner-iOSUITests */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = 68801F2D2ECBD63100A57696 /* Build configuration list for PBXNativeTarget "PaceRunner-iOSUITests" */;
+			buildPhases = (
+				68801F1B2ECBD63100A57696 /* Sources */,
+				68801F1C2ECBD63100A57696 /* Frameworks */,
+				68801F1D2ECBD63100A57696 /* Resources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+				68801F212ECBD63100A57696 /* PBXTargetDependency */,
+			);
+			fileSystemSynchronizedGroups = (
+				68801F222ECBD63100A57696 /* PaceRunner-iOSUITests */,
+			);
+			name = "PaceRunner-iOSUITests";
+			packageProductDependencies = (
+			);
+			productName = "PaceRunner-iOSUITests";
+			productReference = 68801F1F2ECBD63100A57696 /* PaceRunner-iOSUITests.xctest */;
+			productType = "com.apple.product-type.bundle.ui-testing";
+		};
+/* End PBXNativeTarget section */
+
+/* Begin PBXProject section */
+		68801EA42ECBD54000A57696 /* Project object */ = {
+			isa = PBXProject;
+			attributes = {
+				BuildIndependentTargetsInParallel = 1;
+				LastSwiftUpdateCheck = 2610;
+				LastUpgradeCheck = 2610;
+				TargetAttributes = {
+					68801EAB2ECBD54000A57696 = {
+						CreatedOnToolsVersion = 26.1;
+					};
+					68801EB82ECBD54100A57696 = {
+						CreatedOnToolsVersion = 26.1;
+						TestTargetID = 68801EAB2ECBD54000A57696;
+					};
+					68801EC22ECBD54100A57696 = {
+						CreatedOnToolsVersion = 26.1;
+						TestTargetID = 68801EAB2ECBD54000A57696;
+					};
+					68801ECE2ECBD54100A57696 = {
+						CreatedOnToolsVersion = 26.1;
+					};
+					68801EDD2ECBD54200A57696 = {
+						CreatedOnToolsVersion = 26.1;
+						TestTargetID = 68801ECE2ECBD54100A57696;
+					};
+					68801EE72ECBD54200A57696 = {
+						CreatedOnToolsVersion = 26.1;
+						TestTargetID = 68801ECE2ECBD54100A57696;
+					};
+					68801F082ECBD63000A57696 = {
+						CreatedOnToolsVersion = 26.1;
+					};
+					68801F142ECBD63100A57696 = {
+						CreatedOnToolsVersion = 26.1;
+						TestTargetID = 68801F082ECBD63000A57696;
+					};
+					68801F1E2ECBD63100A57696 = {
+						CreatedOnToolsVersion = 26.1;
+						TestTargetID = 68801F082ECBD63000A57696;
+					};
+				};
+			};
+			buildConfigurationList = 68801EA72ECBD54000A57696 /* Build configuration list for PBXProject "PaceRunner" */;
+			developmentRegion = en;
+			hasScannedForEncodings = 0;
+			knownRegions = (
+				en,
+				Base,
+			);
+			mainGroup = 68801EA32ECBD54000A57696;
+			minimizedProjectReferenceProxies = 1;
+			packageReferences = (
+				68EDEF4C2ECE7BD100D54C20 /* XCLocalSwiftPackageReference "../PaceRunnerShared" */,
+			);
+			preferredProjectObjectVersion = 77;
+			productRefGroup = 68801EAD2ECBD54000A57696 /* Products */;
+			projectDirPath = "";
+			projectRoot = "";
+			targets = (
+				68801EAB2ECBD54000A57696 /* PaceRunner */,
+				68801EB82ECBD54100A57696 /* PaceRunnerTests */,
+				68801EC22ECBD54100A57696 /* PaceRunnerUITests */,
+				68801ECE2ECBD54100A57696 /* PaceRunner Watch App */,
+				68801EDD2ECBD54200A57696 /* PaceRunner Watch AppTests */,
+				68801EE72ECBD54200A57696 /* PaceRunner Watch AppUITests */,
+				68801F082ECBD63000A57696 /* PaceRunner-iOS */,
+				68801F142ECBD63100A57696 /* PaceRunner-iOSTests */,
+				68801F1E2ECBD63100A57696 /* PaceRunner-iOSUITests */,
+			);
+		};
+/* End PBXProject section */
+
+/* Begin PBXResourcesBuildPhase section */
+		68801EAA2ECBD54000A57696 /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		68801EB72ECBD54100A57696 /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		68801EC12ECBD54100A57696 /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		68801ECD2ECBD54100A57696 /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		68801EDC2ECBD54200A57696 /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		68801EE62ECBD54200A57696 /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		68801F072ECBD63000A57696 /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		68801F132ECBD63100A57696 /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		68801F1D2ECBD63100A57696 /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXResourcesBuildPhase section */
+
+/* Begin PBXSourcesBuildPhase section */
+		68801EA82ECBD54000A57696 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		68801EB52ECBD54100A57696 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		68801EBF2ECBD54100A57696 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		68801ECB2ECBD54100A57696 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		68801EDA2ECBD54200A57696 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		68801EE42ECBD54200A57696 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		68801F052ECBD63000A57696 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		68801F112ECBD63100A57696 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		68801F1B2ECBD63100A57696 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXSourcesBuildPhase section */
+
+/* Begin PBXTargetDependency section */
+		68801EBB2ECBD54100A57696 /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			target = 68801EAB2ECBD54000A57696 /* PaceRunner */;
+			targetProxy = 68801EBA2ECBD54100A57696 /* PBXContainerItemProxy */;
+		};
+		68801EC52ECBD54100A57696 /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			target = 68801EAB2ECBD54000A57696 /* PaceRunner */;
+			targetProxy = 68801EC42ECBD54100A57696 /* PBXContainerItemProxy */;
+		};
+		68801ED22ECBD54100A57696 /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			target = 68801ECE2ECBD54100A57696 /* PaceRunner Watch App */;
+			targetProxy = 68801ED12ECBD54100A57696 /* PBXContainerItemProxy */;
+		};
+		68801EE02ECBD54200A57696 /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			target = 68801ECE2ECBD54100A57696 /* PaceRunner Watch App */;
+			targetProxy = 68801EDF2ECBD54200A57696 /* PBXContainerItemProxy */;
+		};
+		68801EEA2ECBD54200A57696 /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			target = 68801ECE2ECBD54100A57696 /* PaceRunner Watch App */;
+			targetProxy = 68801EE92ECBD54200A57696 /* PBXContainerItemProxy */;
+		};
+		68801F172ECBD63100A57696 /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			target = 68801F082ECBD63000A57696 /* PaceRunner-iOS */;
+			targetProxy = 68801F162ECBD63100A57696 /* PBXContainerItemProxy */;
+		};
+		68801F212ECBD63100A57696 /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			target = 68801F082ECBD63000A57696 /* PaceRunner-iOS */;
+			targetProxy = 68801F202ECBD63100A57696 /* PBXContainerItemProxy */;
+		};
+		68EDEF4E2ECE7CAC00D54C20 /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			productRef = 68EDEF4D2ECE7CAC00D54C20 /* PaceRunnerShared */;
+		};
+/* End PBXTargetDependency section */
+
+/* Begin XCBuildConfiguration section */
+		68801EF02ECBD54200A57696 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ALWAYS_SEARCH_USER_PATHS = NO;
+				ASSETCATALOG_COMPILER_GENERATE_SWIFT_ASSET_SYMBOL_EXTENSIONS = YES;
+				CLANG_ANALYZER_NONNULL = YES;
+				CLANG_ANALYZER_NUMBER_OBJECT_CONVERSION = YES_AGGRESSIVE;
+				CLANG_CXX_LANGUAGE_STANDARD = "gnu++20";
+				CLANG_ENABLE_MODULES = YES;
+				CLANG_ENABLE_OBJC_ARC = YES;
+				CLANG_ENABLE_OBJC_WEAK = YES;
+				CLANG_WARN_BLOCK_CAPTURE_AUTORELEASING = YES;
+				CLANG_WARN_BOOL_CONVERSION = YES;
+				CLANG_WARN_COMMA = YES;
+				CLANG_WARN_CONSTANT_CONVERSION = YES;
+				CLANG_WARN_DEPRECATED_OBJC_IMPLEMENTATIONS = YES;
+				CLANG_WARN_DIRECT_OBJC_ISA_USAGE = YES_ERROR;
+				CLANG_WARN_DOCUMENTATION_COMMENTS = YES;
+				CLANG_WARN_EMPTY_BODY = YES;
+				CLANG_WARN_ENUM_CONVERSION = YES;
+				CLANG_WARN_INFINITE_RECURSION = YES;
+				CLANG_WARN_INT_CONVERSION = YES;
+				CLANG_WARN_NON_LITERAL_NULL_CONVERSION = YES;
+				CLANG_WARN_OBJC_IMPLICIT_RETAIN_SELF = YES;
+				CLANG_WARN_OBJC_LITERAL_CONVERSION = YES;
+				CLANG_WARN_OBJC_ROOT_CLASS = YES_ERROR;
+				CLANG_WARN_QUOTED_INCLUDE_IN_FRAMEWORK_HEADER = YES;
+				CLANG_WARN_RANGE_LOOP_ANALYSIS = YES;
+				CLANG_WARN_STRICT_PROTOTYPES = YES;
+				CLANG_WARN_SUSPICIOUS_MOVE = YES;
+				CLANG_WARN_UNGUARDED_AVAILABILITY = YES_AGGRESSIVE;
+				CLANG_WARN_UNREACHABLE_CODE = YES;
+				CLANG_WARN__DUPLICATE_METHOD_MATCH = YES;
+				COPY_PHASE_STRIP = NO;
+				DEBUG_INFORMATION_FORMAT = dwarf;
+				DEVELOPMENT_TEAM = 4C37ENDNZM;
+				ENABLE_STRICT_OBJC_MSGSEND = YES;
+				ENABLE_TESTABILITY = YES;
+				ENABLE_USER_SCRIPT_SANDBOXING = YES;
+				GCC_C_LANGUAGE_STANDARD = gnu17;
+				GCC_DYNAMIC_NO_PIC = NO;
+				GCC_NO_COMMON_BLOCKS = YES;
+				GCC_OPTIMIZATION_LEVEL = 0;
+				GCC_PREPROCESSOR_DEFINITIONS = (
+					"DEBUG=1",
+					"$(inherited)",
+				);
+				GCC_WARN_64_TO_32_BIT_CONVERSION = YES;
+				GCC_WARN_ABOUT_RETURN_TYPE = YES_ERROR;
+				GCC_WARN_UNDECLARED_SELECTOR = YES;
+				GCC_WARN_UNINITIALIZED_AUTOS = YES_AGGRESSIVE;
+				GCC_WARN_UNUSED_FUNCTION = YES;
+				GCC_WARN_UNUSED_VARIABLE = YES;
+				LOCALIZATION_PREFERS_STRING_CATALOGS = YES;
+				MTL_ENABLE_DEBUG_INFO = INCLUDE_SOURCE;
+				MTL_FAST_MATH = YES;
+				ONLY_ACTIVE_ARCH = NO;
+				SWIFT_ACTIVE_COMPILATION_CONDITIONS = "DEBUG $(inherited)";
+				SWIFT_OPTIMIZATION_LEVEL = "-Onone";
+			};
+			name = Debug;
+		};
+		68801EF12ECBD54200A57696 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ALWAYS_SEARCH_USER_PATHS = NO;
+				ASSETCATALOG_COMPILER_GENERATE_SWIFT_ASSET_SYMBOL_EXTENSIONS = YES;
+				CLANG_ANALYZER_NONNULL = YES;
+				CLANG_ANALYZER_NUMBER_OBJECT_CONVERSION = YES_AGGRESSIVE;
+				CLANG_CXX_LANGUAGE_STANDARD = "gnu++20";
+				CLANG_ENABLE_MODULES = YES;
+				CLANG_ENABLE_OBJC_ARC = YES;
+				CLANG_ENABLE_OBJC_WEAK = YES;
+				CLANG_WARN_BLOCK_CAPTURE_AUTORELEASING = YES;
+				CLANG_WARN_BOOL_CONVERSION = YES;
+				CLANG_WARN_COMMA = YES;
+				CLANG_WARN_CONSTANT_CONVERSION = YES;
+				CLANG_WARN_DEPRECATED_OBJC_IMPLEMENTATIONS = YES;
+				CLANG_WARN_DIRECT_OBJC_ISA_USAGE = YES_ERROR;
+				CLANG_WARN_DOCUMENTATION_COMMENTS = YES;
+				CLANG_WARN_EMPTY_BODY = YES;
+				CLANG_WARN_ENUM_CONVERSION = YES;
+				CLANG_WARN_INFINITE_RECURSION = YES;
+				CLANG_WARN_INT_CONVERSION = YES;
+				CLANG_WARN_NON_LITERAL_NULL_CONVERSION = YES;
+				CLANG_WARN_OBJC_IMPLICIT_RETAIN_SELF = YES;
+				CLANG_WARN_OBJC_LITERAL_CONVERSION = YES;
+				CLANG_WARN_OBJC_ROOT_CLASS = YES_ERROR;
+				CLANG_WARN_QUOTED_INCLUDE_IN_FRAMEWORK_HEADER = YES;
+				CLANG_WARN_RANGE_LOOP_ANALYSIS = YES;
+				CLANG_WARN_STRICT_PROTOTYPES = YES;
+				CLANG_WARN_SUSPICIOUS_MOVE = YES;
+				CLANG_WARN_UNGUARDED_AVAILABILITY = YES_AGGRESSIVE;
+				CLANG_WARN_UNREACHABLE_CODE = YES;
+				CLANG_WARN__DUPLICATE_METHOD_MATCH = YES;
+				COPY_PHASE_STRIP = NO;
+				DEBUG_INFORMATION_FORMAT = "dwarf-with-dsym";
+				DEVELOPMENT_TEAM = 4C37ENDNZM;
+				ENABLE_NS_ASSERTIONS = NO;
+				ENABLE_STRICT_OBJC_MSGSEND = YES;
+				ENABLE_USER_SCRIPT_SANDBOXING = YES;
+				GCC_C_LANGUAGE_STANDARD = gnu17;
+				GCC_NO_COMMON_BLOCKS = YES;
+				GCC_WARN_64_TO_32_BIT_CONVERSION = YES;
+				GCC_WARN_ABOUT_RETURN_TYPE = YES_ERROR;
+				GCC_WARN_UNDECLARED_SELECTOR = YES;
+				GCC_WARN_UNINITIALIZED_AUTOS = YES_AGGRESSIVE;
+				GCC_WARN_UNUSED_FUNCTION = YES;
+				GCC_WARN_UNUSED_VARIABLE = YES;
+				LOCALIZATION_PREFERS_STRING_CATALOGS = YES;
+				MTL_ENABLE_DEBUG_INFO = NO;
+				MTL_FAST_MATH = YES;
+				SWIFT_COMPILATION_MODE = wholemodule;
+			};
+			name = Release;
+		};
+		68801EF32ECBD54200A57696 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
+				CODE_SIGN_ENTITLEMENTS = "PaceRunner Watch App/PaceRunner Watch App.entitlements";
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_TEAM = 4C37ENDNZM;
+				ENABLE_PREVIEWS = YES;
+				FRAMEWORK_SEARCH_PATHS = (
+					"$(inherited)",
+					"$(CONFIGURATION_BUILD_DIR)",
+				);
+				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_FILE = "PaceRunner-Watch-App-Info.plist";
+				INFOPLIST_KEY_CFBundleDisplayName = PaceRunner;
+				INFOPLIST_KEY_NSHealthShareUsageDescription = "PaceRunner reads your workout history from Apple Health.";
+				INFOPLIST_KEY_NSHealthUpdateUsageDescription = "PaceRunner saves your workout data to Apple Health.";
+				INFOPLIST_KEY_NSLocationAlwaysAndWhenInUseUsageDescription = "PaceRunner needs your location to track distance and calculate pace during workouts.";
+				INFOPLIST_KEY_NSLocationWhenInUseUsageDescription = "PaceRunner needs your location to track distance and calculate pace during workouts.";
+				INFOPLIST_KEY_UISupportedInterfaceOrientations = "UIInterfaceOrientationPortrait UIInterfaceOrientationPortraitUpsideDown";
+				INFOPLIST_KEY_WKCompanionAppBundleIdentifier = com.brintontech.PaceRunner;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+				);
+				MARKETING_VERSION = 1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = com.brintontech.PaceRunner.watchkitapp;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SDKROOT = watchos;
+				SKIP_INSTALL = YES;
+				STRING_CATALOG_GENERATE_SYMBOLS = YES;
+				SWIFT_APPROACHABLE_CONCURRENCY = YES;
+				SWIFT_DEFAULT_ACTOR_ISOLATION = MainActor;
+				SWIFT_EMIT_LOC_STRINGS = YES;
+				SWIFT_ENABLE_EXPLICIT_MODULES = NO;
+				SWIFT_INCLUDE_PATHS = "$(CONFIGURATION_BUILD_DIR)/PaceRunner-Shared.framework/Modules";
+				SWIFT_UPCOMING_FEATURE_MEMBER_IMPORT_VISIBILITY = YES;
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = 4;
+				WATCHOS_DEPLOYMENT_TARGET = 26.1;
+			};
+			name = Debug;
+		};
+		68801EF42ECBD54200A57696 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
+				CODE_SIGN_ENTITLEMENTS = "PaceRunner Watch App/PaceRunner Watch App.entitlements";
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_TEAM = 4C37ENDNZM;
+				ENABLE_PREVIEWS = YES;
+				FRAMEWORK_SEARCH_PATHS = (
+					"$(inherited)",
+					"$(CONFIGURATION_BUILD_DIR)",
+				);
+				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_FILE = "PaceRunner-Watch-App-Info.plist";
+				INFOPLIST_KEY_CFBundleDisplayName = PaceRunner;
+				INFOPLIST_KEY_NSHealthShareUsageDescription = "PaceRunner reads your workout history from Apple Health.";
+				INFOPLIST_KEY_NSHealthUpdateUsageDescription = "PaceRunner saves your workout data to Apple Health.";
+				INFOPLIST_KEY_NSLocationAlwaysAndWhenInUseUsageDescription = "PaceRunner needs your location to track distance and calculate pace during workouts.";
+				INFOPLIST_KEY_NSLocationWhenInUseUsageDescription = "PaceRunner needs your location to track distance and calculate pace during workouts.";
+				INFOPLIST_KEY_UISupportedInterfaceOrientations = "UIInterfaceOrientationPortrait UIInterfaceOrientationPortraitUpsideDown";
+				INFOPLIST_KEY_WKCompanionAppBundleIdentifier = com.brintontech.PaceRunner;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+				);
+				MARKETING_VERSION = 1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = com.brintontech.PaceRunner.watchkitapp;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SDKROOT = watchos;
+				SKIP_INSTALL = YES;
+				STRING_CATALOG_GENERATE_SYMBOLS = YES;
+				SWIFT_APPROACHABLE_CONCURRENCY = YES;
+				SWIFT_DEFAULT_ACTOR_ISOLATION = MainActor;
+				SWIFT_EMIT_LOC_STRINGS = YES;
+				SWIFT_ENABLE_EXPLICIT_MODULES = NO;
+				SWIFT_INCLUDE_PATHS = "$(CONFIGURATION_BUILD_DIR)/PaceRunner-Shared.framework/Modules";
+				SWIFT_UPCOMING_FEATURE_MEMBER_IMPORT_VISIBILITY = YES;
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = 4;
+				VALIDATE_PRODUCT = YES;
+				WATCHOS_DEPLOYMENT_TARGET = 26.1;
+			};
+			name = Release;
+		};
+		68801EF72ECBD54200A57696 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_TEAM = 4C37ENDNZM;
+				ENABLE_PREVIEWS = YES;
+				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_KEY_CFBundleDisplayName = PaceRunner;
+				INFOPLIST_KEY_UIApplicationSceneManifest_Generation = YES;
+				INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents = YES;
+				INFOPLIST_KEY_UILaunchScreen_Generation = YES;
+				INFOPLIST_KEY_UISupportedInterfaceOrientations_iPad = "UIInterfaceOrientationPortrait UIInterfaceOrientationPortraitUpsideDown UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight";
+				INFOPLIST_KEY_UISupportedInterfaceOrientations_iPhone = "UIInterfaceOrientationPortrait UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight";
+				IPHONEOS_DEPLOYMENT_TARGET = 26.1;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+				);
+				MARKETING_VERSION = 1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = com.brintontech.PaceRunner;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SDKROOT = iphoneos;
+				STRING_CATALOG_GENERATE_SYMBOLS = YES;
+				SWIFT_APPROACHABLE_CONCURRENCY = YES;
+				SWIFT_DEFAULT_ACTOR_ISOLATION = MainActor;
+				SWIFT_EMIT_LOC_STRINGS = YES;
+				SWIFT_ENABLE_EXPLICIT_MODULES = NO;
+				SWIFT_UPCOMING_FEATURE_MEMBER_IMPORT_VISIBILITY = YES;
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = "1,2";
+			};
+			name = Debug;
+		};
+		68801EF82ECBD54200A57696 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_TEAM = 4C37ENDNZM;
+				ENABLE_PREVIEWS = YES;
+				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_KEY_CFBundleDisplayName = PaceRunner;
+				INFOPLIST_KEY_UIApplicationSceneManifest_Generation = YES;
+				INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents = YES;
+				INFOPLIST_KEY_UILaunchScreen_Generation = YES;
+				INFOPLIST_KEY_UISupportedInterfaceOrientations_iPad = "UIInterfaceOrientationPortrait UIInterfaceOrientationPortraitUpsideDown UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight";
+				INFOPLIST_KEY_UISupportedInterfaceOrientations_iPhone = "UIInterfaceOrientationPortrait UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight";
+				IPHONEOS_DEPLOYMENT_TARGET = 26.1;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+				);
+				MARKETING_VERSION = 1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = com.brintontech.PaceRunner;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SDKROOT = iphoneos;
+				STRING_CATALOG_GENERATE_SYMBOLS = YES;
+				SWIFT_APPROACHABLE_CONCURRENCY = YES;
+				SWIFT_DEFAULT_ACTOR_ISOLATION = MainActor;
+				SWIFT_EMIT_LOC_STRINGS = YES;
+				SWIFT_ENABLE_EXPLICIT_MODULES = NO;
+				SWIFT_UPCOMING_FEATURE_MEMBER_IMPORT_VISIBILITY = YES;
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = "1,2";
+				VALIDATE_PRODUCT = YES;
+			};
+			name = Release;
+		};
+		68801EFA2ECBD54200A57696 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				BUNDLE_LOADER = "$(TEST_HOST)";
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_TEAM = 4C37ENDNZM;
+				GENERATE_INFOPLIST_FILE = YES;
+				IPHONEOS_DEPLOYMENT_TARGET = 26.1;
+				MARKETING_VERSION = 1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = com.brintontech.PaceRunnerTests;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SDKROOT = iphoneos;
+				STRING_CATALOG_GENERATE_SYMBOLS = NO;
+				SWIFT_APPROACHABLE_CONCURRENCY = YES;
+				SWIFT_EMIT_LOC_STRINGS = NO;
+				SWIFT_UPCOMING_FEATURE_MEMBER_IMPORT_VISIBILITY = YES;
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = "1,2";
+				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/PaceRunner.app/$(BUNDLE_EXECUTABLE_FOLDER_PATH)/PaceRunner";
+			};
+			name = Debug;
+		};
+		68801EFB2ECBD54200A57696 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				BUNDLE_LOADER = "$(TEST_HOST)";
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_TEAM = 4C37ENDNZM;
+				GENERATE_INFOPLIST_FILE = YES;
+				IPHONEOS_DEPLOYMENT_TARGET = 26.1;
+				MARKETING_VERSION = 1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = com.brintontech.PaceRunnerTests;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SDKROOT = iphoneos;
+				STRING_CATALOG_GENERATE_SYMBOLS = NO;
+				SWIFT_APPROACHABLE_CONCURRENCY = YES;
+				SWIFT_EMIT_LOC_STRINGS = NO;
+				SWIFT_UPCOMING_FEATURE_MEMBER_IMPORT_VISIBILITY = YES;
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = "1,2";
+				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/PaceRunner.app/$(BUNDLE_EXECUTABLE_FOLDER_PATH)/PaceRunner";
+				VALIDATE_PRODUCT = YES;
+			};
+			name = Release;
+		};
+		68801EFD2ECBD54200A57696 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_TEAM = 4C37ENDNZM;
+				GENERATE_INFOPLIST_FILE = YES;
+				IPHONEOS_DEPLOYMENT_TARGET = 26.1;
+				MARKETING_VERSION = 1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = com.brintontech.PaceRunnerUITests;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SDKROOT = iphoneos;
+				STRING_CATALOG_GENERATE_SYMBOLS = NO;
+				SWIFT_APPROACHABLE_CONCURRENCY = YES;
+				SWIFT_EMIT_LOC_STRINGS = NO;
+				SWIFT_UPCOMING_FEATURE_MEMBER_IMPORT_VISIBILITY = YES;
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = "1,2";
+				TEST_TARGET_NAME = PaceRunner;
+			};
+			name = Debug;
+		};
+		68801EFE2ECBD54200A57696 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_TEAM = 4C37ENDNZM;
+				GENERATE_INFOPLIST_FILE = YES;
+				IPHONEOS_DEPLOYMENT_TARGET = 26.1;
+				MARKETING_VERSION = 1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = com.brintontech.PaceRunnerUITests;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SDKROOT = iphoneos;
+				STRING_CATALOG_GENERATE_SYMBOLS = NO;
+				SWIFT_APPROACHABLE_CONCURRENCY = YES;
+				SWIFT_EMIT_LOC_STRINGS = NO;
+				SWIFT_UPCOMING_FEATURE_MEMBER_IMPORT_VISIBILITY = YES;
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = "1,2";
+				TEST_TARGET_NAME = PaceRunner;
+				VALIDATE_PRODUCT = YES;
+			};
+			name = Release;
+		};
+		68801F002ECBD54200A57696 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				BUNDLE_LOADER = "$(TEST_HOST)";
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_TEAM = 4C37ENDNZM;
+				GENERATE_INFOPLIST_FILE = YES;
+				MARKETING_VERSION = 1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = "com.brintontech.PaceRunner-Watch-AppTests";
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SDKROOT = watchos;
+				STRING_CATALOG_GENERATE_SYMBOLS = NO;
+				SWIFT_APPROACHABLE_CONCURRENCY = YES;
+				SWIFT_EMIT_LOC_STRINGS = NO;
+				SWIFT_UPCOMING_FEATURE_MEMBER_IMPORT_VISIBILITY = YES;
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = 4;
+				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/PaceRunner Watch App.app/$(BUNDLE_EXECUTABLE_FOLDER_PATH)/PaceRunner Watch App";
+				WATCHOS_DEPLOYMENT_TARGET = 26.1;
+			};
+			name = Debug;
+		};
+		68801F012ECBD54200A57696 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				BUNDLE_LOADER = "$(TEST_HOST)";
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_TEAM = 4C37ENDNZM;
+				GENERATE_INFOPLIST_FILE = YES;
+				MARKETING_VERSION = 1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = "com.brintontech.PaceRunner-Watch-AppTests";
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SDKROOT = watchos;
+				STRING_CATALOG_GENERATE_SYMBOLS = NO;
+				SWIFT_APPROACHABLE_CONCURRENCY = YES;
+				SWIFT_EMIT_LOC_STRINGS = NO;
+				SWIFT_UPCOMING_FEATURE_MEMBER_IMPORT_VISIBILITY = YES;
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = 4;
+				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/PaceRunner Watch App.app/$(BUNDLE_EXECUTABLE_FOLDER_PATH)/PaceRunner Watch App";
+				VALIDATE_PRODUCT = YES;
+				WATCHOS_DEPLOYMENT_TARGET = 26.1;
+			};
+			name = Release;
+		};
+		68801F032ECBD54200A57696 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_TEAM = 4C37ENDNZM;
+				GENERATE_INFOPLIST_FILE = YES;
+				MARKETING_VERSION = 1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = "com.brintontech.PaceRunner-Watch-AppUITests";
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SDKROOT = watchos;
+				STRING_CATALOG_GENERATE_SYMBOLS = NO;
+				SWIFT_APPROACHABLE_CONCURRENCY = YES;
+				SWIFT_EMIT_LOC_STRINGS = NO;
+				SWIFT_UPCOMING_FEATURE_MEMBER_IMPORT_VISIBILITY = YES;
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = 4;
+				TEST_TARGET_NAME = "PaceRunner Watch App";
+				WATCHOS_DEPLOYMENT_TARGET = 26.1;
+			};
+			name = Debug;
+		};
+		68801F042ECBD54200A57696 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_TEAM = 4C37ENDNZM;
+				GENERATE_INFOPLIST_FILE = YES;
+				MARKETING_VERSION = 1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = "com.brintontech.PaceRunner-Watch-AppUITests";
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SDKROOT = watchos;
+				STRING_CATALOG_GENERATE_SYMBOLS = NO;
+				SWIFT_APPROACHABLE_CONCURRENCY = YES;
+				SWIFT_EMIT_LOC_STRINGS = NO;
+				SWIFT_UPCOMING_FEATURE_MEMBER_IMPORT_VISIBILITY = YES;
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = 4;
+				TEST_TARGET_NAME = "PaceRunner Watch App";
+				VALIDATE_PRODUCT = YES;
+				WATCHOS_DEPLOYMENT_TARGET = 26.1;
+			};
+			name = Release;
+		};
+		68801F282ECBD63100A57696 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
+				CODE_SIGN_ENTITLEMENTS = "PaceRunner-iOS/PaceRunner-iOS.entitlements";
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_TEAM = 4C37ENDNZM;
+				ENABLE_PREVIEWS = YES;
+				FRAMEWORK_SEARCH_PATHS = (
+					"$(inherited)",
+					"$(CONFIGURATION_BUILD_DIR)",
+				);
+				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_KEY_UIApplicationSceneManifest_Generation = YES;
+				INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents = YES;
+				INFOPLIST_KEY_UILaunchScreen_Generation = YES;
+				INFOPLIST_KEY_UISupportedInterfaceOrientations_iPad = "UIInterfaceOrientationPortrait UIInterfaceOrientationPortraitUpsideDown UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight";
+				INFOPLIST_KEY_UISupportedInterfaceOrientations_iPhone = "UIInterfaceOrientationPortrait UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight";
+				IPHONEOS_DEPLOYMENT_TARGET = 26.1;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+				);
+				MARKETING_VERSION = 1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = "com.brintontech.PaceRunner-iOS";
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SDKROOT = iphoneos;
+				STRING_CATALOG_GENERATE_SYMBOLS = YES;
+				SWIFT_APPROACHABLE_CONCURRENCY = YES;
+				SWIFT_DEFAULT_ACTOR_ISOLATION = MainActor;
+				SWIFT_EMIT_LOC_STRINGS = YES;
+				SWIFT_UPCOMING_FEATURE_MEMBER_IMPORT_VISIBILITY = YES;
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = "1,2";
+			};
+			name = Debug;
+		};
+		68801F292ECBD63100A57696 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
+				CODE_SIGN_ENTITLEMENTS = "PaceRunner-iOS/PaceRunner-iOS.entitlements";
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_TEAM = 4C37ENDNZM;
+				ENABLE_PREVIEWS = YES;
+				FRAMEWORK_SEARCH_PATHS = (
+					"$(inherited)",
+					"$(CONFIGURATION_BUILD_DIR)",
+				);
+				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_KEY_UIApplicationSceneManifest_Generation = YES;
+				INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents = YES;
+				INFOPLIST_KEY_UILaunchScreen_Generation = YES;
+				INFOPLIST_KEY_UISupportedInterfaceOrientations_iPad = "UIInterfaceOrientationPortrait UIInterfaceOrientationPortraitUpsideDown UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight";
+				INFOPLIST_KEY_UISupportedInterfaceOrientations_iPhone = "UIInterfaceOrientationPortrait UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight";
+				IPHONEOS_DEPLOYMENT_TARGET = 26.1;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+				);
+				MARKETING_VERSION = 1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = "com.brintontech.PaceRunner-iOS";
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SDKROOT = iphoneos;
+				STRING_CATALOG_GENERATE_SYMBOLS = YES;
+				SWIFT_APPROACHABLE_CONCURRENCY = YES;
+				SWIFT_DEFAULT_ACTOR_ISOLATION = MainActor;
+				SWIFT_EMIT_LOC_STRINGS = YES;
+				SWIFT_UPCOMING_FEATURE_MEMBER_IMPORT_VISIBILITY = YES;
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = "1,2";
+				VALIDATE_PRODUCT = YES;
+			};
+			name = Release;
+		};
+		68801F2B2ECBD63100A57696 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				BUNDLE_LOADER = "$(TEST_HOST)";
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_TEAM = 4C37ENDNZM;
+				GENERATE_INFOPLIST_FILE = YES;
+				IPHONEOS_DEPLOYMENT_TARGET = 26.1;
+				MARKETING_VERSION = 1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = "com.brintontech.PaceRunner-iOSTests";
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SDKROOT = iphoneos;
+				STRING_CATALOG_GENERATE_SYMBOLS = NO;
+				SWIFT_APPROACHABLE_CONCURRENCY = YES;
+				SWIFT_EMIT_LOC_STRINGS = NO;
+				SWIFT_UPCOMING_FEATURE_MEMBER_IMPORT_VISIBILITY = YES;
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = "1,2";
+				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/PaceRunner-iOS.app/$(BUNDLE_EXECUTABLE_FOLDER_PATH)/PaceRunner-iOS";
+			};
+			name = Debug;
+		};
+		68801F2C2ECBD63100A57696 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				BUNDLE_LOADER = "$(TEST_HOST)";
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_TEAM = 4C37ENDNZM;
+				GENERATE_INFOPLIST_FILE = YES;
+				IPHONEOS_DEPLOYMENT_TARGET = 26.1;
+				MARKETING_VERSION = 1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = "com.brintontech.PaceRunner-iOSTests";
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SDKROOT = iphoneos;
+				STRING_CATALOG_GENERATE_SYMBOLS = NO;
+				SWIFT_APPROACHABLE_CONCURRENCY = YES;
+				SWIFT_EMIT_LOC_STRINGS = NO;
+				SWIFT_UPCOMING_FEATURE_MEMBER_IMPORT_VISIBILITY = YES;
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = "1,2";
+				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/PaceRunner-iOS.app/$(BUNDLE_EXECUTABLE_FOLDER_PATH)/PaceRunner-iOS";
+				VALIDATE_PRODUCT = YES;
+			};
+			name = Release;
+		};
+		68801F2E2ECBD63100A57696 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_TEAM = 4C37ENDNZM;
+				GENERATE_INFOPLIST_FILE = YES;
+				IPHONEOS_DEPLOYMENT_TARGET = 26.1;
+				MARKETING_VERSION = 1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = "com.brintontech.PaceRunner-iOSUITests";
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SDKROOT = iphoneos;
+				STRING_CATALOG_GENERATE_SYMBOLS = NO;
+				SWIFT_APPROACHABLE_CONCURRENCY = YES;
+				SWIFT_EMIT_LOC_STRINGS = NO;
+				SWIFT_UPCOMING_FEATURE_MEMBER_IMPORT_VISIBILITY = YES;
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = "1,2";
+				TEST_TARGET_NAME = "PaceRunner-iOS";
+			};
+			name = Debug;
+		};
+		68801F2F2ECBD63100A57696 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_TEAM = 4C37ENDNZM;
+				GENERATE_INFOPLIST_FILE = YES;
+				IPHONEOS_DEPLOYMENT_TARGET = 26.1;
+				MARKETING_VERSION = 1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = "com.brintontech.PaceRunner-iOSUITests";
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SDKROOT = iphoneos;
+				STRING_CATALOG_GENERATE_SYMBOLS = NO;
+				SWIFT_APPROACHABLE_CONCURRENCY = YES;
+				SWIFT_EMIT_LOC_STRINGS = NO;
+				SWIFT_UPCOMING_FEATURE_MEMBER_IMPORT_VISIBILITY = YES;
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = "1,2";
+				TEST_TARGET_NAME = "PaceRunner-iOS";
+				VALIDATE_PRODUCT = YES;
+			};
+			name = Release;
+		};
+/* End XCBuildConfiguration section */
+
+/* Begin XCConfigurationList section */
+		68801EA72ECBD54000A57696 /* Build configuration list for PBXProject "PaceRunner" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				68801EF02ECBD54200A57696 /* Debug */,
+				68801EF12ECBD54200A57696 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+		68801EF22ECBD54200A57696 /* Build configuration list for PBXNativeTarget "PaceRunner Watch App" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				68801EF32ECBD54200A57696 /* Debug */,
+				68801EF42ECBD54200A57696 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+		68801EF62ECBD54200A57696 /* Build configuration list for PBXNativeTarget "PaceRunner" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				68801EF72ECBD54200A57696 /* Debug */,
+				68801EF82ECBD54200A57696 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+		68801EF92ECBD54200A57696 /* Build configuration list for PBXNativeTarget "PaceRunnerTests" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				68801EFA2ECBD54200A57696 /* Debug */,
+				68801EFB2ECBD54200A57696 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+		68801EFC2ECBD54200A57696 /* Build configuration list for PBXNativeTarget "PaceRunnerUITests" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				68801EFD2ECBD54200A57696 /* Debug */,
+				68801EFE2ECBD54200A57696 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+		68801EFF2ECBD54200A57696 /* Build configuration list for PBXNativeTarget "PaceRunner Watch AppTests" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				68801F002ECBD54200A57696 /* Debug */,
+				68801F012ECBD54200A57696 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+		68801F022ECBD54200A57696 /* Build configuration list for PBXNativeTarget "PaceRunner Watch AppUITests" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				68801F032ECBD54200A57696 /* Debug */,
+				68801F042ECBD54200A57696 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+		68801F272ECBD63100A57696 /* Build configuration list for PBXNativeTarget "PaceRunner-iOS" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				68801F282ECBD63100A57696 /* Debug */,
+				68801F292ECBD63100A57696 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+		68801F2A2ECBD63100A57696 /* Build configuration list for PBXNativeTarget "PaceRunner-iOSTests" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				68801F2B2ECBD63100A57696 /* Debug */,
+				68801F2C2ECBD63100A57696 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+		68801F2D2ECBD63100A57696 /* Build configuration list for PBXNativeTarget "PaceRunner-iOSUITests" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				68801F2E2ECBD63100A57696 /* Debug */,
+				68801F2F2ECBD63100A57696 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+/* End XCConfigurationList section */
+
+/* Begin XCLocalSwiftPackageReference section */
+		68EDEF4C2ECE7BD100D54C20 /* XCLocalSwiftPackageReference "../PaceRunnerShared" */ = {
+			isa = XCLocalSwiftPackageReference;
+			relativePath = ../PaceRunnerShared;
+		};
+/* End XCLocalSwiftPackageReference section */
+
+/* Begin XCSwiftPackageProductDependency section */
+		68EDEF4D2ECE7CAC00D54C20 /* PaceRunnerShared */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = 68EDEF4C2ECE7BD100D54C20 /* XCLocalSwiftPackageReference "../PaceRunnerShared" */;
+			productName = PaceRunnerShared;
+		};
+		68EDEF4F2ECE7CF000D54C20 /* PaceRunnerShared */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = 68EDEF4C2ECE7BD100D54C20 /* XCLocalSwiftPackageReference "../PaceRunnerShared" */;
+			productName = PaceRunnerShared;
+		};
+		68EDEF512ECE7D0100D54C20 /* PaceRunnerShared */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = 68EDEF4C2ECE7BD100D54C20 /* XCLocalSwiftPackageReference "../PaceRunnerShared" */;
+			productName = PaceRunnerShared;
+		};
+/* End XCSwiftPackageProductDependency section */
+	};
+	rootObject = 68801EA42ECBD54000A57696 /* Project object */;
+}

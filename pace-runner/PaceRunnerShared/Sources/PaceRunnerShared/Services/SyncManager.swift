@@ -1,0 +1,355 @@
+import Foundation
+import WatchConnectivity
+import Combine
+
+/// Watch Connectivity synchronization manager
+///
+/// Handles bidirectional data sync between iPhone and Apple Watch:
+/// - iPhone → Watch: Run configurations
+/// - Watch → iPhone: Workout summaries
+///
+/// Uses three WatchConnectivity transfer methods:
+/// - sendMessage: Immediate delivery when reachable (<2s latency)
+/// - transferUserInfo: Queued delivery when not reachable
+/// - transferFile: Large file transfer (workout summaries with splits)
+///
+/// Constitution compliance:
+/// - <2s sync: Uses sendMessage when reachable
+/// - Non-blocking: All transfers async, doesn't block UI
+/// - Offline-capable: Queued transfers work without connectivity
+///
+/// Reference: specs/001-pace-runner-mvp/contracts/watchconnectivity.md
+@available(iOS 9.0, watchOS 2.0, *)
+public class SyncManager: NSObject, SyncManagerProtocol {
+
+    // MARK: - Published Properties
+
+    private let syncStatusSubject = CurrentValueSubject<SyncStatus, Never>(.notActivated)
+    public var syncStatusPublisher: AnyPublisher<SyncStatus, Never> {
+        syncStatusSubject.eraseToAnyPublisher()
+    }
+
+    // MARK: - Private Properties
+
+    private let session: WCSession?
+    private let encoder = JSONEncoder()
+    private let decoder = JSONDecoder()
+
+    // Message types
+    private enum MessageType: String {
+        case configurationUpdate = "configurationUpdate"
+        case configurationDelete = "configurationDelete"
+        case workoutSummary = "workoutSummary"
+    }
+
+    // MARK: - Initialization
+
+    public override init() {
+        // Check if WatchConnectivity is supported
+        if WCSession.isSupported() {
+            self.session = WCSession.default
+        } else {
+            self.session = nil
+        }
+
+        super.init()
+
+        // Set delegate
+        session?.delegate = self
+    }
+
+    // MARK: - Public Methods
+
+    public func activate() {
+        guard let session = session else {
+            syncStatusSubject.send(.failed("WatchConnectivity not supported"))
+            return
+        }
+
+        session.activate()
+    }
+
+    public func syncConfiguration(_ configuration: RunConfiguration) {
+        guard let session = session else { return }
+
+        do {
+            // Encode configuration
+            let configData = try encoder.encode(configuration)
+
+            // Create message
+            let message: [String: Any] = [
+                "type": MessageType.configurationUpdate.rawValue,
+                "data": configData
+            ]
+
+            // Send immediately if reachable, otherwise queue
+            if session.isReachable {
+                syncStatusSubject.send(.syncing)
+
+                session.sendMessage(message, replyHandler: { _ in
+                    self.syncStatusSubject.send(.synced)
+                }, errorHandler: { error in
+                    self.syncStatusSubject.send(.failed(error.localizedDescription))
+                    // Fallback to queued transfer
+                    self.queueConfiguration(message)
+                })
+            } else {
+                // Queue for later delivery
+                queueConfiguration(message)
+            }
+
+        } catch {
+            syncStatusSubject.send(.failed("Encoding failed: \(error)"))
+        }
+    }
+
+    public func deleteConfiguration(id: UUID) {
+        guard let session = session else { return }
+
+        let message: [String: Any] = [
+            "type": MessageType.configurationDelete.rawValue,
+            "id": id.uuidString
+        ]
+
+        if session.isReachable {
+            session.sendMessage(message, replyHandler: nil, errorHandler: nil)
+        } else {
+            session.transferUserInfo(message)
+        }
+    }
+
+    public func syncWorkoutSummary(_ summary: WorkoutSummary) {
+        guard let session = session else { return }
+
+        do {
+            // Encode summary to JSON
+            encoder.dateEncodingStrategy = .iso8601
+            let jsonData = try encoder.encode(summary)
+
+            // Create temp file
+            let tempURL = FileManager.default.temporaryDirectory
+                .appendingPathComponent("workout-\(summary.id).json")
+
+            try jsonData.write(to: tempURL)
+
+            // Transfer file (works in background)
+            let metadata: [String: Any] = [
+                "type": MessageType.workoutSummary.rawValue,
+                "id": summary.id.uuidString
+            ]
+
+            session.transferFile(tempURL, metadata: metadata)
+
+        } catch {
+            syncStatusSubject.send(.failed("File transfer failed: \(error)"))
+        }
+    }
+
+    // MARK: - Private Methods
+
+    private func queueConfiguration(_ message: [String: Any]) {
+        session?.transferUserInfo(message)
+        syncStatusSubject.send(.synced) // Queued, will deliver later
+    }
+}
+
+// MARK: - WCSessionDelegate
+
+@available(iOS 9.0, watchOS 2.0, *)
+extension SyncManager: WCSessionDelegate {
+
+    public func session(_ session: WCSession,
+                activationDidCompleteWith activationState: WCSessionActivationState,
+                error: Error?) {
+        if let error = error {
+            syncStatusSubject.send(.failed(error.localizedDescription))
+        } else {
+            syncStatusSubject.send(.activated)
+        }
+    }
+
+    #if os(iOS)
+    public func sessionDidBecomeInactive(_ session: WCSession) {
+        // iOS only - watch switched
+    }
+
+    public func sessionDidDeactivate(_ session: WCSession) {
+        // iOS only - reactivate for new watch
+        session.activate()
+    }
+    #endif
+
+    public func sessionReachabilityDidChange(_ session: WCSession) {
+        // Reachability changed - sync status may update
+        if session.isReachable {
+            syncStatusSubject.send(.activated)
+        }
+    }
+
+    // MARK: - Message Receiving
+
+    public func session(_ session: WCSession,
+                didReceiveMessage message: [String: Any]) {
+        handleReceivedMessage(message)
+    }
+
+    public func session(_ session: WCSession,
+                didReceiveUserInfo userInfo: [String: Any]) {
+        handleReceivedMessage(userInfo)
+    }
+
+    public func session(_ session: WCSession,
+                didReceive file: WCSessionFile) {
+        handleReceivedFile(file)
+    }
+
+    // MARK: - Message Handling
+
+    private func handleReceivedMessage(_ message: [String: Any]) {
+        guard let typeString = message["type"] as? String,
+              let messageType = MessageType(rawValue: typeString) else {
+            return
+        }
+
+        switch messageType {
+        case .configurationUpdate:
+            handleConfigurationUpdate(message)
+
+        case .configurationDelete:
+            handleConfigurationDelete(message)
+
+        case .workoutSummary:
+            // Workout summaries come via file transfer, not messages
+            break
+        }
+    }
+
+    private func handleConfigurationUpdate(_ message: [String: Any]) {
+        guard let configData = message["data"] as? Data else { return }
+
+        do {
+            let configuration = try decoder.decode(RunConfiguration.self, from: configData)
+
+            // Save to UserDefaults
+            saveConfiguration(configuration)
+
+            // Post notification for UI update
+            NotificationCenter.default.post(
+                name: .configurationSynced,
+                object: configuration
+            )
+
+        } catch {
+            print("Failed to decode configuration: \(error)")
+        }
+    }
+
+    private func handleConfigurationDelete(_ message: [String: Any]) {
+        guard let idString = message["id"] as? String,
+              let id = UUID(uuidString: idString) else {
+            return
+        }
+
+        // Delete from UserDefaults
+        deleteConfigurationFromStorage(id: id)
+
+        // Post notification for UI update
+        NotificationCenter.default.post(
+            name: .configurationDeleted,
+            object: id
+        )
+    }
+
+    private func handleReceivedFile(_ file: WCSessionFile) {
+        guard let metadata = file.metadata,
+              let typeString = metadata["type"] as? String,
+              let messageType = MessageType(rawValue: typeString),
+              messageType == .workoutSummary else {
+            return
+        }
+
+        do {
+            let data = try Data(contentsOf: file.fileURL)
+            decoder.dateDecodingStrategy = .iso8601
+            let summary = try decoder.decode(WorkoutSummary.self, from: data)
+
+            // Save to UserDefaults
+            saveWorkoutSummary(summary)
+
+            // Post notification for UI update
+            NotificationCenter.default.post(
+                name: .workoutSummarySynced,
+                object: summary
+            )
+
+        } catch {
+            print("Failed to decode workout summary: \(error)")
+        }
+    }
+
+    // MARK: - Storage
+
+    private func saveConfiguration(_ configuration: RunConfiguration) {
+        // Load existing configurations
+        var configurations = loadConfigurations()
+
+        // Update or append
+        if let index = configurations.firstIndex(where: { $0.id == configuration.id }) {
+            configurations[index] = configuration
+        } else {
+            configurations.append(configuration)
+        }
+
+        // Save
+        if let data = try? encoder.encode(configurations) {
+            UserDefaults.standard.set(data, forKey: "configurations")
+        }
+    }
+
+    private func deleteConfigurationFromStorage(id: UUID) {
+        var configurations = loadConfigurations()
+        configurations.removeAll { $0.id == id }
+
+        if let data = try? encoder.encode(configurations) {
+            UserDefaults.standard.set(data, forKey: "configurations")
+        }
+    }
+
+    private func loadConfigurations() -> [RunConfiguration] {
+        guard let data = UserDefaults.standard.data(forKey: "configurations"),
+              let configurations = try? decoder.decode([RunConfiguration].self, from: data) else {
+            return []
+        }
+        return configurations
+    }
+
+    private func saveWorkoutSummary(_ summary: WorkoutSummary) {
+        var summaries = loadWorkoutSummaries()
+        summaries.append(summary)
+
+        encoder.dateEncodingStrategy = .iso8601
+        if let data = try? encoder.encode(summaries) {
+            UserDefaults.standard.set(data, forKey: "workoutSummaries")
+        }
+    }
+
+    private func loadWorkoutSummaries() -> [WorkoutSummary] {
+        guard let data = UserDefaults.standard.data(forKey: "workoutSummaries") else {
+            return []
+        }
+
+        decoder.dateDecodingStrategy = .iso8601
+        guard let summaries = try? decoder.decode([WorkoutSummary].self, from: data) else {
+            return []
+        }
+        return summaries
+    }
+}
+
+// MARK: - Notifications
+
+extension Notification.Name {
+    public static let configurationSynced = Notification.Name("configurationSynced")
+    public static let configurationDeleted = Notification.Name("configurationDeleted")
+    public static let workoutSummarySynced = Notification.Name("workoutSummarySynced")
+}

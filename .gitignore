@@ -1,0 +1,19 @@
+# macOS artifacts
+.DS_Store
+
+# Xcode build products
+DerivedData/
+build/
+
+# Xcode user data
+*.xcworkspace/xcuserdata/
+*.xcodeproj/xcuserdata/
+*.xcodeproj/project.xcworkspace/xcuserdata/
+*.xcuserstate
+
+# Swift Package Manager
+.swiftpm/
+.build/
+
+# Spec artifacts (local cache)
+/.specify/cache/
