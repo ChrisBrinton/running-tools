@@ -30,21 +30,25 @@ class ConfigurationStore: ObservableObject {
     private let encoder = JSONEncoder()
     private let decoder = JSONDecoder()
     private var cancellables = Set<AnyCancellable>()
+    private var needsInitialSync = true
 
-    private static let storageKey = "run_configurations"
+    private static let storageKey = "configurations"
 
     // MARK: - Initialization
 
     init(syncManager: SyncManagerProtocol = SyncManager()) {
         self.syncManager = syncManager
 
-        // Activate sync
-        syncManager.activate()
-
         // Subscribe to sync status
         syncManager.syncStatusPublisher
             .receive(on: DispatchQueue.main)
-            .assign(to: &$syncStatus)
+            .sink { [weak self] status in
+                self?.syncStatus = status
+                if status == .activated {
+                    self?.syncAllConfigurationsIfNeeded()
+                }
+            }
+            .store(in: &cancellables)
 
         // Listen for configuration sync notifications
         NotificationCenter.default.publisher(for: .configurationSynced)
@@ -65,6 +69,7 @@ class ConfigurationStore: ObservableObject {
 
         // Load configurations from storage
         loadConfigurations()
+        syncAllConfigurationsIfNeeded()
     }
 
     // MARK: - Public Methods
@@ -114,6 +119,16 @@ class ConfigurationStore: ObservableObject {
             return
         }
         configurations = configs
+    }
+
+    private func syncAllConfigurationsIfNeeded() {
+        guard needsInitialSync else { return }
+        syncAllConfigurations()
+        needsInitialSync = false
+    }
+
+    private func syncAllConfigurations() {
+        configurations.forEach { syncManager.syncConfiguration($0) }
     }
 
     private func saveConfigurations() {

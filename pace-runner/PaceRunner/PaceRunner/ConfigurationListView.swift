@@ -16,7 +16,7 @@ import PaceRunnerShared
 /// - Workout Independence: Works offline, syncs when available
 struct ConfigurationListView: View {
 
-    @StateObject private var store = ConfigurationStore()
+    @ObservedObject var store: ConfigurationStore
     @State private var showingNewConfiguration = false
     @State private var configurationToEdit: RunConfiguration?
 
@@ -168,5 +168,7 @@ struct ConfigurationRow: View {
 // MARK: - Preview
 
 #Preview {
-    ConfigurationListView()
+    MainActor.assumeIsolated {
+        ConfigurationListView(store: ConfigurationStore())
+    }
 }

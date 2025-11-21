@@ -38,6 +38,8 @@ class WorkoutManager: NSObject, WorkoutManagerProtocol {
     private let gpsManager: GPSManagerProtocol
     private let paceCalculator: PaceCalculatorProtocol
     private let audioEngine: AudioEngineProtocol
+    private let mileTracker: MileTracker
+    private let isHealthKitAvailable: Bool
 
     // MARK: - Private Properties
 
@@ -46,7 +48,6 @@ class WorkoutManager: NSObject, WorkoutManagerProtocol {
     private var cancellables = Set<AnyCancellable>()
 
     private var startTime: Date?
-    private var lastMileDistance: Double = 0.0 // Distance at last mile marker
 
     // MARK: - Initialization
 
@@ -54,12 +55,15 @@ class WorkoutManager: NSObject, WorkoutManagerProtocol {
         healthStore: HKHealthStore = HKHealthStore(),
         gpsManager: GPSManagerProtocol,
         paceCalculator: PaceCalculatorProtocol,
-        audioEngine: AudioEngineProtocol
+        audioEngine: AudioEngineProtocol,
+        mileTracker: MileTracker = MileTracker()
     ) {
         self.healthStore = healthStore
         self.gpsManager = gpsManager
         self.paceCalculator = paceCalculator
         self.audioEngine = audioEngine
+        self.mileTracker = mileTracker
+        self.isHealthKitAvailable = HKHealthStore.isHealthDataAvailable()
 
         super.init()
     }
@@ -73,31 +77,47 @@ class WorkoutManager: NSObject, WorkoutManagerProtocol {
         workoutConfig.locationType = .outdoor
 
         // Create workout session
-        let session = try HKWorkoutSession(
-            healthStore: healthStore,
-            configuration: workoutConfig
-        )
-        session.delegate = self
+        var session: HKWorkoutSession?
+        var builder: HKLiveWorkoutBuilder?
 
-        // Create workout builder
-        let builder = session.associatedWorkoutBuilder()
-        builder.dataSource = HKLiveWorkoutDataSource(
-            healthStore: healthStore,
-            workoutConfiguration: workoutConfig
-        )
-        builder.delegate = self
+        if isHealthKitAvailable {
+            let workoutConfig = HKWorkoutConfiguration()
+            workoutConfig.activityType = .running
+            workoutConfig.locationType = .outdoor
 
-        // Store references
+            let createdSession = try HKWorkoutSession(
+                healthStore: healthStore,
+                configuration: workoutConfig
+            )
+            createdSession.delegate = self
+            session = createdSession
+
+            let createdBuilder = createdSession.associatedWorkoutBuilder()
+            createdBuilder.dataSource = HKLiveWorkoutDataSource(
+                healthStore: healthStore,
+                workoutConfiguration: workoutConfig
+            )
+            createdBuilder.delegate = self
+            builder = createdBuilder
+        }
+
         workoutSession = session
         workoutBuilder = builder
 
         // Initialize state
-        let state = WorkoutState(configuration: configuration)
+        var state = WorkoutState(configuration: configuration)
+        state.status = .running
         stateSubject.send(state)
         startTime = Date()
 
         // Setup services
-        try audioEngine.setup()
+        do {
+            try audioEngine.setup()
+        } catch {
+            print("AudioEngine setup failed: \(error)")
+        }
+        mileTracker.reset()
+        paceCalculator.reset()
 
         // Subscribe to GPS updates
         subscribeToGPS()
@@ -106,10 +126,14 @@ class WorkoutManager: NSObject, WorkoutManagerProtocol {
         subscribeToPace()
 
         // Start session
-        session.startActivity(with: Date())
-        try builder.beginCollection(withStart: Date()) { success, error in
-            if let error = error {
-                print("Failed to start workout builder: \(error)")
+        if let session = session {
+            session.startActivity(with: Date())
+        }
+        if let builder = builder {
+            try builder.beginCollection(withStart: Date()) { success, error in
+                if let error = error {
+                    print("Failed to start workout builder: \(error)")
+                }
             }
         }
 
@@ -117,46 +141,41 @@ class WorkoutManager: NSObject, WorkoutManagerProtocol {
         gpsManager.startTracking()
 
         // Start tempo beats at base cadence
-        try audioEngine.startTempoBeats(bpm: configuration.baseCadence)
+        do {
+            try audioEngine.startTempoBeats(bpm: configuration.baseCadence)
+        } catch {
+            print("AudioEngine failed to start tempo beats: \(error)")
+        }
     }
 
     func pauseWorkout() throws {
-        guard let session = workoutSession else {
+        guard var state = stateSubject.value else {
             throw WorkoutManagerError.noActiveWorkout
         }
 
-        session.pause()
+        workoutSession?.pause()
         gpsManager.stopTracking()
         audioEngine.stopTempoBeats()
 
-        // Update state
-        if var state = stateSubject.value {
-            state.status = .paused
-            stateSubject.send(state)
-        }
+        state.status = .paused
+        stateSubject.send(state)
     }
 
     func resumeWorkout() throws {
-        guard let session = workoutSession,
-              let state = currentState else {
+        guard var state = stateSubject.value else {
             throw WorkoutManagerError.noActiveWorkout
         }
 
-        session.resume()
+        workoutSession?.resume()
         gpsManager.startTracking()
         try audioEngine.startTempoBeats(bpm: state.configuration.baseCadence)
 
-        // Update state
-        if var state = stateSubject.value {
-            state.status = .running
-            stateSubject.send(state)
-        }
+        state.status = .running
+        stateSubject.send(state)
     }
 
     func endWorkout() throws -> WorkoutSummary {
-        guard let session = workoutSession,
-              let builder = workoutBuilder,
-              var state = currentState else {
+        guard var state = currentState else {
             throw WorkoutManagerError.noActiveWorkout
         }
 
@@ -164,18 +183,18 @@ class WorkoutManager: NSObject, WorkoutManagerProtocol {
         gpsManager.stopTracking()
         audioEngine.stopTempoBeats()
         audioEngine.teardown()
+        mileTracker.reset()
 
         // End session
-        session.end()
+        workoutSession?.end()
 
-        // Finalize builder
-        builder.endCollection(withEnd: Date()) { success, error in
+        workoutBuilder?.endCollection(withEnd: Date()) { _, error in
             if let error = error {
                 print("Failed to end workout builder: \(error)")
             }
         }
 
-        builder.finishWorkout { workout, error in
+        workoutBuilder?.finishWorkout { _, error in
             if let error = error {
                 print("Failed to finish workout: \(error)")
             }
@@ -198,6 +217,7 @@ class WorkoutManager: NSObject, WorkoutManagerProtocol {
         // Stop services without saving
         gpsManager.stopTracking()
         audioEngine.stopTempoBeats()
+        mileTracker.reset()
         audioEngine.teardown()
 
         // Discard session
@@ -236,8 +256,8 @@ class WorkoutManager: NSObject, WorkoutManagerProtocol {
         // Add sample to pace calculator
         paceCalculator.addSample(distance: distance, timestamp: timestamp)
 
-        // Check for mile markers
-        checkMileMarkers(state: &state, distance: distance)
+        // Update mile tracker
+        handleMileTracking(state: &state, distance: distance)
 
         // Publish updated state
         stateSubject.send(state)
@@ -254,7 +274,10 @@ class WorkoutManager: NSObject, WorkoutManagerProtocol {
     }
 
     private func handlePaceUpdate(_ pace: Pace?) {
-        guard var state = stateSubject.value else { return }
+        guard var state = stateSubject.value,
+              state.status == .running else {
+            return
+        }
 
         state.currentPace = pace
 
@@ -272,31 +295,21 @@ class WorkoutManager: NSObject, WorkoutManagerProtocol {
 
     // MARK: - Mile Markers
 
-    private func checkMileMarkers(state: inout WorkoutState, distance: Double) {
-        let miles = distance / 1609.34
-        let currentMile = Int(miles) + 1
-
-        // Check if crossed into new mile
-        if currentMile > state.currentMile {
-            // Record split for completed mile
-            if state.currentMile > 0,
-               let pace = state.currentPace {
-                let split = MileSplit(
-                    mileNumber: state.currentMile,
-                    actualPace: pace,
-                    targetPace: state.targetPace,
-                    distance: Distance(miles: 1.0)
-                )
-                state.recordMileSplit(split)
-
-                // Voice alert for mile completion
-                audioEngine.playVoiceAlert("Mile \(state.currentMile) complete")
-            }
-
-            // Update current mile
-            state.currentMile = currentMile
-            lastMileDistance = distance
+    private func handleMileTracking(state: inout WorkoutState, distance: Double) {
+        if let completedMile = mileTracker.updateDistance(distance),
+           completedMile > 0,
+           let pace = state.currentPace {
+            let split = MileSplit(
+                mileNumber: completedMile,
+                actualPace: pace,
+                targetPace: state.targetPace,
+                distance: Distance(miles: 1.0)
+            )
+            state.recordMileSplit(split)
+            audioEngine.playVoiceAlert("Mile \(completedMile) complete")
         }
+
+        state.currentMile = mileTracker.mileIndex + 1
     }
 
     // MARK: - Cleanup
@@ -306,7 +319,7 @@ class WorkoutManager: NSObject, WorkoutManagerProtocol {
         workoutSession = nil
         workoutBuilder = nil
         startTime = nil
-        lastMileDistance = 0.0
+        mileTracker.reset()
 
         paceCalculator.reset()
         gpsManager.resetDistance()

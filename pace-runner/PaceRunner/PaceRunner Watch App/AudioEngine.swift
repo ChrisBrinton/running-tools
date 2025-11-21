@@ -39,6 +39,27 @@ class AudioEngine: AudioEngineProtocol {
     private var lastAlertTime: Date?
     private let alertThrottleInterval: TimeInterval = 30.0 // seconds
 
+    // Dependency providers
+    private let engineProvider: () -> AVAudioEngine
+    private let playerProvider: () -> AVAudioPlayerNode
+    private let speechProvider: () -> AVSpeechSynthesizer
+    private let session: AVAudioSession
+    private let dateProvider: () -> Date
+
+    init(
+        engineProvider: @escaping () -> AVAudioEngine = { AVAudioEngine() },
+        playerProvider: @escaping () -> AVAudioPlayerNode = { AVAudioPlayerNode() },
+        speechProvider: @escaping () -> AVSpeechSynthesizer = { AVSpeechSynthesizer() },
+        session: AVAudioSession = .sharedInstance(),
+        dateProvider: @escaping () -> Date = { Date() }
+    ) {
+        self.engineProvider = engineProvider
+        self.playerProvider = playerProvider
+        self.speechProvider = speechProvider
+        self.session = session
+        self.dateProvider = dateProvider
+    }
+
     // MARK: - Setup
 
     func setup() throws {
@@ -46,8 +67,8 @@ class AudioEngine: AudioEngineProtocol {
         try configureAudioSession()
 
         // Create audio engine
-        let engine = AVAudioEngine()
-        let player = AVAudioPlayerNode()
+        let engine = engineProvider()
+        let player = playerProvider()
 
         engine.attach(player)
 
@@ -62,7 +83,7 @@ class AudioEngine: AudioEngineProtocol {
         engine.connect(player, to: engine.mainMixerNode, format: format)
 
         // Create speech synthesizer
-        let synthesizer = AVSpeechSynthesizer()
+        let synthesizer = speechProvider()
 
         // Store references
         self.audioEngine = engine
@@ -70,7 +91,7 @@ class AudioEngine: AudioEngineProtocol {
         self.speechSynthesizer = synthesizer
 
         // Generate beat buffer (reused for all beats)
-        self.beatBuffer = try generateBeatBuffer(format: format)
+        self.beatBuffer = try makeBeatBuffer(format: format)
     }
 
     func teardown() {
@@ -85,17 +106,25 @@ class AudioEngine: AudioEngineProtocol {
     // MARK: - Audio Session Configuration
 
     private func configureAudioSession() throws {
-        let audioSession = AVAudioSession.sharedInstance()
+        // Configure for playback with mixing. Some simulator/device combos
+        // do not support `.longFormAudio`, so fall back to the default policy.
+        do {
+            try session.setCategory(
+                .playback,
+                mode: .default,
+                policy: .longFormAudio,
+                options: [.mixWithOthers, .duckOthers]
+            )
+        } catch {
+            print("AudioEngine: Falling back to default audio policy: \(error)")
+            try session.setCategory(
+                .playback,
+                mode: .default,
+                options: [.mixWithOthers, .duckOthers]
+            )
+        }
 
-        // Configure for playback with mixing
-        try audioSession.setCategory(
-            .playback,
-            mode: .default,
-            policy: .longFormAudio, // Enables background audio on watchOS
-            options: [.mixWithOthers, .duckOthers]
-        )
-
-        try audioSession.setActive(true)
+        try session.setActive(true)
     }
 
     // MARK: - Tempo Beats
@@ -129,13 +158,21 @@ class AudioEngine: AudioEngineProtocol {
     }
 
     func stopTempoBeats() {
-        guard let player = playerNode else { return }
+        guard let player = playerNode else {
+            isPlaying = false
+            return
+        }
 
-        player.stop()
+        if isPlaying && player.isPlaying {
+            // Use reset instead of stop to avoid deadlocks
+            player.reset()
+        }
+
         isPlaying = false
     }
 
     func updateTempo(bpm: Int) throws {
+        currentBPM = bpm
         guard isPlaying else { return }
 
         // Restart with new BPM
@@ -185,8 +222,7 @@ class AudioEngine: AudioEngineProtocol {
 
     // MARK: - Beat Buffer Generation
 
-    private func generateBeatBuffer(format: AVAudioFormat) throws -> AVAudioPCMBuffer {
-        // Calculate frame count for 10ms beat
+    func makeBeatBuffer(format: AVAudioFormat) throws -> AVAudioPCMBuffer {
         let frameCount = AVAudioFrameCount(sampleRate * beatDuration)
 
         guard let buffer = AVAudioPCMBuffer(pcmFormat: format, frameCapacity: frameCount) else {
@@ -199,17 +235,39 @@ class AudioEngine: AudioEngineProtocol {
             throw AudioEngineError.bufferCreationFailed
         }
 
-        // Generate 800Hz sine wave with envelope
-        for frame in 0..<Int(frameCount) {
-            let phase = 2.0 * Float.pi * beatFrequency * Float(frame) / Float(sampleRate)
-            let envelope = envelopeValue(frame: frame, totalFrames: Int(frameCount))
-            channelData[frame] = beatAmplitude * sin(phase) * envelope
+        let samples = Self.generateBeatSamples(
+            sampleRate: sampleRate,
+            duration: beatDuration,
+            frequency: beatFrequency,
+            amplitude: beatAmplitude
+        )
+
+        for (index, sample) in samples.enumerated() {
+            channelData[index] = sample
         }
 
         return buffer
     }
 
-    private func envelopeValue(frame: Int, totalFrames: Int) -> Float {
+    static func generateBeatSamples(
+        sampleRate: Double,
+        duration: Double,
+        frequency: Float,
+        amplitude: Float
+    ) -> [Float] {
+        let totalFrames = Int(sampleRate * duration)
+        var samples = Array(repeating: Float.zero, count: totalFrames)
+
+        for frame in 0..<totalFrames {
+            let phase = 2.0 * Float.pi * frequency * Float(frame) / Float(sampleRate)
+            let envelope = envelopeValue(frame: frame, totalFrames: totalFrames)
+            samples[frame] = amplitude * sin(phase) * envelope
+        }
+
+        return samples
+    }
+
+    private static func envelopeValue(frame: Int, totalFrames: Int) -> Float {
         // Simple linear fade out to prevent clicks
         let fadeFrames = totalFrames / 4 // Fade last 25%
         let fadeStart = totalFrames - fadeFrames
@@ -225,15 +283,22 @@ class AudioEngine: AudioEngineProtocol {
     // MARK: - Voice Alerts
 
     func playVoiceAlert(_ message: String) {
-        guard let synthesizer = speechSynthesizer else { return }
+        let synthesizer: AVSpeechSynthesizer
+        if let existing = speechSynthesizer {
+            synthesizer = existing
+        } else {
+            let created = speechProvider()
+            speechSynthesizer = created
+            synthesizer = created
+        }
 
         // Throttle alerts
         if let lastTime = lastAlertTime,
-           Date().timeIntervalSince(lastTime) < alertThrottleInterval {
+           dateProvider().timeIntervalSince(lastTime) < alertThrottleInterval {
             return
         }
 
-        lastAlertTime = Date()
+        lastAlertTime = dateProvider()
 
         // Create utterance
         let utterance = AVSpeechUtterance(string: message)
@@ -249,5 +314,19 @@ class AudioEngine: AudioEngineProtocol {
     enum AudioEngineError: Error {
         case notSetup
         case bufferCreationFailed
+    }
+
+    var tempoBPM: Int { currentBPM }
+
+    func configureForTesting(engine: AVAudioEngine, player: AVAudioPlayerNode, synthesizer: AVSpeechSynthesizer, buffer: AVAudioPCMBuffer) {
+        audioEngine = engine
+        playerNode = player
+        speechSynthesizer = synthesizer
+        beatBuffer = buffer
+    }
+
+    func setTestState(bpm: Int, playing: Bool) {
+        currentBPM = bpm
+        isPlaying = playing
     }
 }

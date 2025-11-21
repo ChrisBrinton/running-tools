@@ -6,12 +6,40 @@
 //
 
 import SwiftUI
+import PaceRunnerShared
 
 @main
 struct PaceRunner_Watch_AppApp: App {
+    private let workoutManager: WorkoutManagerProtocol
+    private let syncManager: SyncManagerProtocol
+    @StateObject private var configurationStore: ConfigurationStore
+
+    init() {
+        let syncManager = SyncManager()
+        syncManager.activate()
+        self.syncManager = syncManager
+        self.workoutManager = WorkoutManager(
+            gpsManager: GPSManager(),
+            paceCalculator: PaceCalculator(),
+            audioEngine: AudioEngine()
+        )
+        _configurationStore = StateObject(wrappedValue: ConfigurationStore(syncManager: syncManager))
+    }
+
     var body: some Scene {
         WindowGroup {
-            ContentView()
+            NavigationStack {
+                if let configuration = configurationStore.selectedConfiguration {
+                    WorkoutContainerView(
+                        configuration: configuration,
+                        workoutManager: workoutManager,
+                        syncManager: syncManager,
+                        onExit: { configurationStore.clearSelection() }
+                    )
+                } else {
+                    ConfigurationSelectionView(store: configurationStore)
+                }
+            }
         }
     }
 }

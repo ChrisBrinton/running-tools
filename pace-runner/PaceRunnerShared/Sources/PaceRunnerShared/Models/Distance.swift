@@ -61,6 +61,14 @@ public struct Distance: Codable, Equatable, Comparable {
         self.miles = miles
     }
 
+    /// Creates a distance from meters.
+    /// - Parameter meters: Distance in meters (must be non-negative).
+    public init(meters: Double) {
+        precondition(meters >= 0.0,
+                     "Distance must be non-negative, got \(meters)")
+        self.miles = meters / Self.metersPerMile
+    }
+
     // MARK: - Comparable Conformance
 
     /// Compares two distances

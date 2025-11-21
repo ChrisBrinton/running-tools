@@ -166,13 +166,17 @@ public struct WorkoutState: Equatable {
         let endTime = Date()
         let totalDistance = Distance(miles: milesCompleted)
 
-        // Calculate average pace: total time / total distance
-        let totalSeconds = Int(elapsedTime)
-        let paceSeconds = Int(Double(totalSeconds) / milesCompleted)
-        let avgPace = Pace(
-            minutes: paceSeconds / 60,
-            seconds: paceSeconds % 60
-        )
+        let avgPace: Pace
+        if milesCompleted > 0 {
+            let totalSeconds = max(Int(elapsedTime), 1)
+            let secondsPerMile = max(240, min(1200, Int((Double(totalSeconds) / milesCompleted).rounded())))
+            avgPace = Pace(
+                minutes: secondsPerMile / 60,
+                seconds: secondsPerMile % 60
+            )
+        } else {
+            avgPace = configuration.milePaces.first ?? Pace(minutes: 8, seconds: 0)
+        }
 
         return WorkoutSummary(
             configurationName: configuration.name,

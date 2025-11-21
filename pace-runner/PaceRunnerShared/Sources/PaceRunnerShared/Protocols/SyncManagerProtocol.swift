@@ -27,6 +27,9 @@ public protocol SyncManagerProtocol: AnyObject {
 
     /// Activate Watch Connectivity session
     func activate()
+    
+    /// Manually check for pending content (iOS only)
+    func checkForPendingContent()
 }
 
 /// Sync status for UI feedback

@@ -68,6 +68,25 @@ public struct Pace: Codable, Equatable, Comparable {
         self.seconds = seconds
     }
 
+    /// Creates a pace from the total number of seconds per mile.
+    /// - Parameter totalSeconds: Total seconds for one mile.
+    /// - Returns: `nil` if the value is outside the supported range.
+    public init?(totalSeconds: Int) {
+        guard 240...1200 ~= totalSeconds else { return nil }
+        let minutes = totalSeconds / 60
+        let seconds = totalSeconds % 60
+        self.init(minutes: minutes, seconds: seconds)
+    }
+
+    /// Creates a pace from a seconds-per-meter measurement.
+    /// - Parameter secondsPerMeter: Seconds required to travel one meter.
+    /// - Returns: `nil` if the computed pace is outside the supported range.
+    public init?(secondsPerMeter: Double) {
+        guard secondsPerMeter.isFinite, secondsPerMeter > 0 else { return nil }
+        let totalSeconds = Int((secondsPerMeter * 1609.34).rounded())
+        self.init(totalSeconds: totalSeconds)
+    }
+
     // MARK: - Comparable Conformance
 
     /// Compares two paces

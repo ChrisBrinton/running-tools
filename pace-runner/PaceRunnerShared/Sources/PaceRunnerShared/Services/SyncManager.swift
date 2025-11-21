@@ -42,6 +42,8 @@ public class SyncManager: NSObject, SyncManagerProtocol {
         case workoutSummary = "workoutSummary"
     }
 
+    private let loggerPrefix = "[SyncManager]"
+
     // MARK: - Initialization
 
     public override init() {
@@ -62,7 +64,8 @@ public class SyncManager: NSObject, SyncManagerProtocol {
 
     public func activate() {
         guard let session = session else {
-            syncStatusSubject.send(.failed("WatchConnectivity not supported"))
+            let message = "WatchConnectivity not supported"
+            syncStatusSubject.send(.failed(message))
             return
         }
 
@@ -70,7 +73,10 @@ public class SyncManager: NSObject, SyncManagerProtocol {
     }
 
     public func syncConfiguration(_ configuration: RunConfiguration) {
-        guard let session = session else { return }
+        guard let session = session else {
+            print("\(loggerPrefix) syncConfiguration: missing WCSession")
+            return
+        }
 
         do {
             // Encode configuration
@@ -104,7 +110,9 @@ public class SyncManager: NSObject, SyncManagerProtocol {
     }
 
     public func deleteConfiguration(id: UUID) {
-        guard let session = session else { return }
+        guard let session = session else {
+            return
+        }
 
         let message: [String: Any] = [
             "type": MessageType.configurationDelete.rawValue,
@@ -119,29 +127,40 @@ public class SyncManager: NSObject, SyncManagerProtocol {
     }
 
     public func syncWorkoutSummary(_ summary: WorkoutSummary) {
-        guard let session = session else { return }
+        guard let session = session else {
+            print("\(loggerPrefix) syncWorkoutSummary: missing WCSession")
+            return
+        }
 
         do {
             // Encode summary to JSON
             encoder.dateEncodingStrategy = .iso8601
             let jsonData = try encoder.encode(summary)
 
-            // Create temp file
-            let tempURL = FileManager.default.temporaryDirectory
-                .appendingPathComponent("workout-\(summary.id).json")
-
-            try jsonData.write(to: tempURL)
-
-            // Transfer file (works in background)
-            let metadata: [String: Any] = [
+            let message: [String: Any] = [
                 "type": MessageType.workoutSummary.rawValue,
-                "id": summary.id.uuidString
+                "id": summary.id.uuidString,
+                "data": jsonData
             ]
 
-            session.transferFile(tempURL, metadata: metadata)
+            // Try sendMessage first (immediate, requires reachability)
+            if session.isReachable {
+                session.sendMessage(message, replyHandler: nil, errorHandler: { error in
+                    // Fall back to updateApplicationContext
+                    do {
+                        try session.updateApplicationContext(message)
+                    } catch {
+                        print("\(self.loggerPrefix) syncWorkoutSummary failed: \(error)")
+                    }
+                })
+            } else {
+                // Not reachable - use updateApplicationContext (queued, guaranteed delivery)
+                try session.updateApplicationContext(message)
+            }
 
         } catch {
-            syncStatusSubject.send(.failed("File transfer failed: \(error)"))
+            print("\(loggerPrefix) syncWorkoutSummary: failed - \(error)")
+            syncStatusSubject.send(.failed("Workout sync failed: \(error)"))
         }
     }
 
@@ -150,6 +169,19 @@ public class SyncManager: NSObject, SyncManagerProtocol {
     private func queueConfiguration(_ message: [String: Any]) {
         session?.transferUserInfo(message)
         syncStatusSubject.send(.synced) // Queued, will deliver later
+    }
+    
+    /// Manually check for pending content (iOS only)
+    /// Call this when user manually refreshes to check for queued transfers
+    public func checkForPendingContent() {
+        #if os(iOS)
+        guard let session = session else { return }
+        
+        // Process outstanding userInfo transfers
+        for transfer in session.outstandingUserInfoTransfers {
+            handleReceivedMessage(transfer.userInfo)
+        }
+        #endif
     }
 }
 
@@ -189,8 +221,20 @@ extension SyncManager: WCSessionDelegate {
     // MARK: - Message Receiving
 
     public func session(_ session: WCSession,
-                didReceiveMessage message: [String: Any]) {
+                didReceiveApplicationContext applicationContext: [String : Any]) {
+        handleReceivedMessage(applicationContext)
+    }
+
+    public func session(_ session: WCSession,
+                didReceiveMessage message: [String : Any]) {
         handleReceivedMessage(message)
+    }
+
+    public func session(_ session: WCSession,
+                didReceiveMessage message: [String : Any],
+                replyHandler: @escaping ([String : Any]) -> Void) {
+        handleReceivedMessage(message)
+        replyHandler(["status": "ok"])
     }
 
     public func session(_ session: WCSession,
@@ -201,6 +245,14 @@ extension SyncManager: WCSessionDelegate {
     public func session(_ session: WCSession,
                 didReceive file: WCSessionFile) {
         handleReceivedFile(file)
+    }
+
+    public func session(_ session: WCSession,
+                didFinish fileTransfer: WCSessionFileTransfer,
+                error: Error?) {
+        if let error = error {
+            print("\(loggerPrefix) fileTransfer failed: \(error.localizedDescription)")
+        }
     }
 
     // MARK: - Message Handling
@@ -219,14 +271,14 @@ extension SyncManager: WCSessionDelegate {
             handleConfigurationDelete(message)
 
         case .workoutSummary:
-            // Workout summaries come via file transfer, not messages
-            break
+            handleWorkoutSummaryMessage(message)
         }
     }
 
     private func handleConfigurationUpdate(_ message: [String: Any]) {
-        guard let configData = message["data"] as? Data else { return }
-
+        guard let configData = message["data"] as? Data else {
+            return
+        }
         do {
             let configuration = try decoder.decode(RunConfiguration.self, from: configData)
 
@@ -240,7 +292,7 @@ extension SyncManager: WCSessionDelegate {
             )
 
         } catch {
-            print("Failed to decode configuration: \(error)")
+            print("\(loggerPrefix) Failed to decode configuration: \(error)")
         }
     }
 
@@ -259,6 +311,28 @@ extension SyncManager: WCSessionDelegate {
             object: id
         )
     }
+    
+    private func handleWorkoutSummaryMessage(_ message: [String: Any]) {
+        guard let summaryData = message["data"] as? Data else {
+            return
+        }
+        
+        do {
+            decoder.dateDecodingStrategy = .iso8601
+            let summary = try decoder.decode(WorkoutSummary.self, from: summaryData)
+            
+            // Save to UserDefaults
+            saveWorkoutSummary(summary)
+            
+            // Post notification for UI update
+            NotificationCenter.default.post(
+                name: .workoutSummarySynced,
+                object: summary
+            )
+        } catch {
+            print("\(loggerPrefix) Failed to decode workout summary: \(error)")
+        }
+    }
 
     private func handleReceivedFile(_ file: WCSessionFile) {
         guard let metadata = file.metadata,
@@ -269,10 +343,12 @@ extension SyncManager: WCSessionDelegate {
         }
 
         do {
+            print("\(loggerPrefix) handleReceivedFile metadata: \(metadata)")
             let data = try Data(contentsOf: file.fileURL)
             decoder.dateDecodingStrategy = .iso8601
             let summary = try decoder.decode(WorkoutSummary.self, from: data)
 
+            print("\(loggerPrefix) received workout summary \(summary.id)")
             // Save to UserDefaults
             saveWorkoutSummary(summary)
 
