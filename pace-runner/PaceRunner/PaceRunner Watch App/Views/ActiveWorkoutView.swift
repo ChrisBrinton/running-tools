@@ -6,14 +6,24 @@ struct ActiveWorkoutView: View {
 
     var body: some View {
         VStack(spacing: 8) {
-            Text(viewModel.formattedPace())
-                .font(.system(size: 42, weight: .bold, design: .rounded))
-                .foregroundStyle(colorForPaceStatus())
+            // 2x2 Pace Grid (Slow=master, Medium, Fast)
+            VStack(spacing: 4) {
+                HStack(spacing: 12) {
+                    paceWindow(label: "Spt", pace: viewModel.state.paceWindows.splitPace)
+                    paceWindow(label: viewModel.slowPaceLabel, pace: viewModel.state.paceWindows.slowPace)
+                }
+                HStack(spacing: 12) {
+                    paceWindow(label: viewModel.mediumPaceLabel, pace: viewModel.state.paceWindows.mediumPace)
+                    paceWindow(label: viewModel.fastPaceLabel, pace: viewModel.state.paceWindows.fastPace)
+                }
+            }
+            .padding(.vertical, 4)
 
-            HStack {
-                label(title: "Target", value: viewModel.state.targetPace.formatted)
-                label(title: "Dist", value: viewModel.formattedDistance())
-                label(title: "Time", value: viewModel.formattedTime())
+            // Stats row
+            HStack(spacing: 8) {
+                statLabel(title: "Target", value: viewModel.state.targetPace.formatted)
+                statLabel(title: "Dist", value: viewModel.formattedDistance())
+                statLabel(title: "Time", value: viewModel.formattedTime())
             }
 
             ProgressView(value: viewModel.state.progress)
@@ -26,21 +36,55 @@ struct ActiveWorkoutView: View {
         .padding()
     }
 
-    private func label(title: String, value: String) -> some View {
-        VStack {
-            Text(title)
-                .font(.caption2)
+    /// Displays a single pace window with label and color coding
+    private func paceWindow(label: String, pace: Pace?) -> some View {
+        VStack(spacing: 2) {
+            Text(label)
+                .font(.system(size: 10, weight: .medium))
                 .foregroundStyle(.secondary)
-            Text(value)
-                .font(.caption)
+            Text(pace?.formatted ?? "--:--")
+                .font(.system(size: 20, weight: .bold, design: .monospaced))
+                .foregroundStyle(colorForPace(pace))
         }
+        .frame(maxWidth: .infinity)
     }
 
-    private func colorForPaceStatus() -> Color {
-        guard let withinTolerance = viewModel.state.isWithinTolerance else {
-            return .primary
+    /// Small stat label for target/distance/time
+    private func statLabel(title: String, value: String) -> some View {
+        VStack(spacing: 2) {
+            Text(title)
+                .font(.system(size: 9))
+                .foregroundStyle(.secondary)
+            Text(value)
+                .font(.system(size: 11, design: .monospaced))
         }
-        return withinTolerance ? .green : .yellow
+        .frame(maxWidth: .infinity)
+    }
+
+    /// Color codes a pace based on its deviation from target
+    /// - Green: On target (within tolerance)
+    /// - Yellow/Cyan: Slightly off (1-2x tolerance) - Yellow=slow, Cyan=fast
+    /// - Red/Purple: Very off (>2x tolerance) - Red=very slow, Purple=very fast
+    private func colorForPace(_ pace: Pace?) -> Color {
+        guard let pace = pace else {
+            return .gray
+        }
+
+        // Positive deviation = slower than target, negative = faster
+        let deviation = pace.totalSeconds - viewModel.state.targetPace.totalSeconds
+        let absDeviation = abs(deviation)
+        let tolerance = viewModel.state.configuration.paceTolerance
+
+        if absDeviation <= tolerance {
+            // On target
+            return .green
+        } else if absDeviation <= tolerance * 2 {
+            // Slightly off: yellow for slow, cyan for fast
+            return deviation > 0 ? .yellow : .cyan
+        } else {
+            // Very off: red for very slow, purple for very fast
+            return deviation > 0 ? .red : .purple
+        }
     }
 }
 
@@ -49,7 +93,7 @@ struct ActiveWorkoutView: View {
         name: "Preview Run",
         distance: Distance(miles: 5),
         targetPace: Pace(minutes: 8, seconds: 0),
-        baseCadence: 180,
+        cadenceOffset: 0,
         paceTolerance: 5
     )
     ActiveWorkoutView(viewModel: WorkoutViewModel(

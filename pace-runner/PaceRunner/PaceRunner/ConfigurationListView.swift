@@ -32,7 +32,14 @@ struct ConfigurationListView: View {
             .navigationTitle("Run Configurations")
             .toolbar {
                 ToolbarItem(placement: .topBarLeading) {
-                    syncStatusIndicator
+                    HStack(spacing: 12) {
+                        syncStatusIndicator
+                        Button {
+                            store.syncAllConfigurations()
+                        } label: {
+                            Label("Sync to Watch", systemImage: "arrow.triangle.2.circlepath")
+                        }
+                    }
                 }
                 ToolbarItem(placement: .topBarTrailing) {
                     Button {

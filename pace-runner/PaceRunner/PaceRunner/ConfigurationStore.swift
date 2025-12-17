@@ -78,7 +78,7 @@ class ConfigurationStore: ObservableObject {
     func createConfiguration(_ configuration: RunConfiguration) {
         configurations.append(configuration)
         saveConfigurations()
-        syncManager.syncConfiguration(configuration)
+        syncAllConfigurations()
     }
 
     /// Updates an existing configuration
@@ -86,7 +86,7 @@ class ConfigurationStore: ObservableObject {
         if let index = configurations.firstIndex(where: { $0.id == configuration.id }) {
             configurations[index] = configuration
             saveConfigurations()
-            syncManager.syncConfiguration(configuration)
+            syncAllConfigurations()
         }
     }
 
@@ -94,7 +94,7 @@ class ConfigurationStore: ObservableObject {
     func deleteConfiguration(_ configuration: RunConfiguration) {
         configurations.removeAll { $0.id == configuration.id }
         saveConfigurations()
-        syncManager.deleteConfiguration(id: configuration.id)
+        syncAllConfigurations()
     }
 
     /// Duplicates a configuration with a new name
@@ -103,8 +103,11 @@ class ConfigurationStore: ObservableObject {
             name: newName,
             distance: configuration.distance,
             milePaces: configuration.milePaces,
-            baseCadence: configuration.baseCadence,
-            paceTolerance: configuration.paceTolerance
+            cadenceOffset: configuration.cadenceOffset,
+            paceTolerance: configuration.paceTolerance,
+            metronomeMinVolume: configuration.metronomeMinVolume,
+            metronomeMaxVolume: configuration.metronomeMaxVolume,
+            autoEndRun: configuration.autoEndRun
         )
         createConfiguration(duplicate)
     }
@@ -127,8 +130,9 @@ class ConfigurationStore: ObservableObject {
         needsInitialSync = false
     }
 
-    private func syncAllConfigurations() {
-        configurations.forEach { syncManager.syncConfiguration($0) }
+    /// Syncs all configurations to watch, replacing watch storage
+    func syncAllConfigurations() {
+        syncManager.syncAllConfigurations(configurations)
     }
 
     private func saveConfigurations() {

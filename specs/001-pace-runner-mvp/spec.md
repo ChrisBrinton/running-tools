@@ -189,3 +189,134 @@ A runner with shorter or longer stride wants to customize the tempo beat cadence
 - Elevation/terrain analysis
 - Weather integration
 - Cloud backup or multi-device sync beyond iPhone-Watch pair
+
+## Critical Issues (Real-World Testing - 2025-11-23)
+
+Issues discovered during first outdoor test run. **Must be fixed before next real-world test.**
+
+### 1. Workout App Conflict (CRITICAL)
+
+**Problem**: Starting a workout in PaceRunner ends the native Workout app's workout and vice versa. PaceRunner is intended to be a **companion/add-on** to the native Workout app, not a replacement. The native Workout app collects extensive health data that PaceRunner should not duplicate.
+
+**Current behavior**: Both apps fight for the HealthKit workout session, causing one to terminate when the other starts.
+
+**Required behavior - Companion Mode**:
+- PaceRunner should **not** start its own HealthKit workout session by default
+- Add configuration option on iPhone: "Standalone Mode" vs "Companion Mode" (default)
+- **Companion Mode**: PaceRunner only provides audio feedback and pace tracking; user starts actual workout via native Workout app
+- **Standalone Mode**: PaceRunner manages full workout session (current behavior, for users who want it)
+- In Companion Mode, PaceRunner should detect when a workout is started in the native app and begin its session automatically (if possible via HealthKit observer)
+- Alternatively: Manual "Start Pacing" button that doesn't touch HealthKit
+
+**Technical investigation needed**: Can we observe when native Workout app starts a workout? Or does user need to manually start PaceRunner after starting native workout?
+
+### 2. Audio Inconsistency on Workout Conflict
+
+**Problem**: When switching to native Workout app and starting a workout there, voice prompts stopped but metronome clicks continued. Inconsistent state.
+
+**Required behavior**: If PaceRunner session is terminated (for any reason), ALL audio must stop - both voice prompts and metronome. Audio state must be consistent with session state.
+
+### 3. Metronome Sound Quality (CRITICAL)
+
+**Problem**: Current metronome sounds like a "galloping horse" - irregular, unpleasant, not useful for pacing.
+
+**Required behavior**:
+- Steady, consistent beat that matches target footfall cadence
+- Sound should be a **bass drum** or similar low-frequency percussion (not a click or beep)
+- Beat frequency should match target cadence from configuration (e.g., 180 SPM = 180 BPM = 3 Hz)
+- Tempo should be rock-solid consistent, not varying based on current pace
+
+**Note**: The metronome tempo should NOT change based on current pace. It provides the TARGET rhythm the runner should match. Voice alerts tell them if they're off pace.
+
+### 4. Metronome Behavior - Adaptive Volume (CRITICAL)
+
+**Problem**: Constant metronome is extremely annoying during a run, even when on pace.
+
+**Required behavior**:
+- **In target zone**: Metronome is SILENT (or option to have very quiet background beat)
+- **Leaving target zone**: Metronome fades in, starting quiet
+- **Further from target**: Metronome gets progressively louder
+- Volume should be proportional to pace deviation (e.g., 5 sec off = 20% volume, 15 sec off = 60% volume, 30+ sec off = 100% volume)
+- Consider: different sound/tone for "too fast" vs "too slow"?
+
+**Configuration options** (on iPhone):
+- Enable/disable adaptive metronome
+- Target zone tolerance (seconds) before metronome starts
+- Maximum volume level
+
+### 5. Workout Sync Not Working
+
+**Problem**: Completed workout on watch (1.1 miles) did not transfer to iPhone when returning to phone proximity.
+
+**Investigation needed**:
+- Test in simulator: complete workout without phone app running, then start phone app
+- Verify WatchConnectivity transferFile is being called on workout completion
+- Verify queued transfers are delivered when connection restored
+- Check for errors in transfer completion handler
+
+### 6. What Worked Well
+
+- GPS tracking was accurate and functional
+- Voice alerts ("go faster"/"go slower") were audible and clear
+- Audio was hearable during run
+- No noticeable battery drain
+- 1.1 mile workout completed successfully (data-wise)
+
+## Polish (Post-MVP)
+
+Items identified during initial testing that should be addressed before production release.
+
+### Workout Start Grace Period
+
+**Problem**: Audio feedback (tempo beats and voice alerts) starts immediately when workout begins, but runner needs time to actually start moving. Results in premature "speed up" alerts while still standing or walking to starting position.
+
+**Proposed solution**:
+1. After workout starts, enter "waiting for movement" state (no audio feedback)
+2. Detect movement start via GPS (speed threshold ~0.5 m/s or ~3 min/mile movement)
+3. Once movement detected, start grace period timer (configurable, default 10-15 seconds)
+4. During grace period: tempo beats may play, but no pace deviation alerts
+5. After grace period expires: full audio feedback enabled, pace calculation begins
+6. Display should show "Starting..." or "Get ready..." during this phase
+
+**Edge cases**:
+- Runner starts moving before pressing Start → grace period begins immediately after Start
+- Runner stops during grace period → pause grace period timer, resume when moving again
+- Very slow warm-up walk → may need speed threshold tuning or manual "I'm running now" button
+
+### Configuration Editor Improvements
+
+#### Per-Mile Custom Pace Entry
+Currently the app supports "even pace" (same for all miles) and "progressive pace" (linear interpolation between start and end pace). Need to add a third mode for fully custom per-mile pacing.
+
+**Use case**: Runner wants a 7-mile run with warm-up, tempo, and cool-down segments:
+- Miles 1-2: 10:40 (warm-up)
+- Miles 3-6: 9:25 (tempo)
+- Mile 7: 10:50 (cool-down)
+
+**Requirements**:
+- Add "Custom" option to pace strategy picker
+- When custom is selected, show editable list of all miles with individual pace pickers
+- Allow copy/paste of pace values between miles
+- Consider "apply to range" feature (e.g., set miles 3-6 to same pace)
+
+#### Distance Picker Redesign
+Current slider is problematic:
+- Too sensitive for precise selection
+- Most of the range (marathon+) is rarely used
+- Decimal precision (3.45 mi) unnecessary - 0.25 mile granularity sufficient
+
+**Proposed solution**:
+- Replace slider with stepper/spinner showing whole miles + quarter increments (0.25, 0.5, 0.75)
+- Keep existing preset dropdown (5K, 10K, Half, Marathon, etc.)
+- Add text field for direct entry of unusual distances
+- Default interaction: tap +/- buttons or use spinner wheel
+- Fallback: type exact value for edge cases
+
+#### Compact Pace Picker
+Current wheel pickers take significant vertical space even when not being edited.
+
+**Proposed solution**:
+- Display pace as tappable text (e.g., "8:30 min/mi") when not editing
+- Tap to expand into full wheel picker
+- Collapse back to text display after selection
+- Reduces form height significantly when multiple paces visible

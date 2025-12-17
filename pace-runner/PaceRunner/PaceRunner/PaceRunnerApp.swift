@@ -23,6 +23,9 @@ struct PaceRunnerApp: App {
         syncManager.activate()
         self.syncManager = syncManager
 
+        // Sync settings to watch on startup
+        syncManager.syncSettings(AppSettings.load())
+
         _configurationStore = StateObject(
             wrappedValue: ConfigurationStore(syncManager: syncManager)
         )
@@ -42,6 +45,11 @@ struct PaceRunnerApp: App {
                 WorkoutHistoryView(store: historyStore)
                     .tabItem {
                         Label("History", systemImage: "clock.arrow.circlepath")
+                    }
+
+                SettingsView(syncManager: syncManager)
+                    .tabItem {
+                        Label("Settings", systemImage: "gear")
                     }
             }
         }

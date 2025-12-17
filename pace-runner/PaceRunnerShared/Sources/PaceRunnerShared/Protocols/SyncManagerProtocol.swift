@@ -5,6 +5,7 @@ import Combine
 ///
 /// SyncManager handles:
 /// - Configuration sync (iPhone → Watch)
+/// - Settings sync (iPhone → Watch)
 /// - Workout summary sync (Watch → iPhone)
 /// - Bi-directional sync status updates
 ///
@@ -21,13 +22,22 @@ public protocol SyncManagerProtocol: AnyObject {
     /// - Parameter id: Configuration ID to delete
     func deleteConfiguration(id: UUID)
 
+    /// Send all configurations to counterpart device, replacing its storage
+    /// Use for initial sync or manual "sync all" action
+    /// - Parameter configurations: All configurations to sync
+    func syncAllConfigurations(_ configurations: [RunConfiguration])
+
+    /// Send app settings to counterpart device
+    /// - Parameter settings: App settings to sync
+    func syncSettings(_ settings: AppSettings)
+
     /// Send workout summary to counterpart device
     /// - Parameter summary: Workout summary to sync
     func syncWorkoutSummary(_ summary: WorkoutSummary)
 
     /// Activate Watch Connectivity session
     func activate()
-    
+
     /// Manually check for pending content (iOS only)
     func checkForPendingContent()
 }

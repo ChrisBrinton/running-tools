@@ -40,6 +40,15 @@ final class ConfigurationStore: ObservableObject {
                 }
             }
             .store(in: &cancellables)
+
+        NotificationCenter.default.publisher(for: .configurationsReplacedAll)
+            .receive(on: DispatchQueue.main)
+            .sink { [weak self] notification in
+                if let configs = notification.object as? [RunConfiguration] {
+                    self?.handleReplacedAllConfigurations(configs)
+                }
+            }
+            .store(in: &cancellables)
     }
 
     func select(_ configuration: RunConfiguration) {
@@ -88,6 +97,19 @@ final class ConfigurationStore: ObservableObject {
         }
     }
 
+    private func handleReplacedAllConfigurations(_ newConfigurations: [RunConfiguration]) {
+        configurations = newConfigurations
+        saveConfigurations()
+
+        // Update selection if current selection was removed
+        if let selected = selectedConfiguration,
+           !configurations.contains(where: { $0.id == selected.id }) {
+            selectedConfiguration = configurations.first
+        } else if selectedConfiguration == nil {
+            selectedConfiguration = configurations.first
+        }
+    }
+
     private func removeSampleIfNeeded() {
         if configurations.count == 1,
            configurations.first?.name == Self.sampleConfiguration.name {
@@ -100,7 +122,7 @@ final class ConfigurationStore: ObservableObject {
             name: "Preview Run",
             distance: Distance(miles: 5),
             targetPace: Pace(minutes: 8, seconds: 0),
-            baseCadence: 180,
+            cadenceOffset: 0,
             paceTolerance: 5
         )
     }

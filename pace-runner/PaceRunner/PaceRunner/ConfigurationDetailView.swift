@@ -23,6 +23,9 @@ struct ConfigurationDetailView: View {
     private let editingConfiguration: RunConfiguration?
     private let isEditing: Bool
 
+    // Global settings (for stride-based BPM calculation)
+    private let settings: AppSettings
+
     // Form state
     @State private var name: String
     @State private var distanceMiles: Double
@@ -30,8 +33,11 @@ struct ConfigurationDetailView: View {
     @State private var evenPace: PaceInput
     @State private var startPace: PaceInput
     @State private var endPace: PaceInput
-    @State private var baseCadence: Int
+    @State private var cadenceOffset: Int  // Offset from calculated base BPM (-15 to +15)
     @State private var paceTolerance: Int
+    @State private var metronomeMinVolume: Float
+    @State private var metronomeMaxVolume: Float
+    @State private var autoEndRun: Bool
 
     // Validation
     @State private var showingValidationError = false
@@ -43,13 +49,17 @@ struct ConfigurationDetailView: View {
         self.store = store
         self.editingConfiguration = configuration
         self.isEditing = configuration != nil
+        self.settings = AppSettings.load()
 
         // Initialize state from configuration or defaults
         if let config = configuration {
             _name = State(initialValue: config.name)
             _distanceMiles = State(initialValue: config.distance.miles)
-            _baseCadence = State(initialValue: config.baseCadence)
+            _cadenceOffset = State(initialValue: config.cadenceOffset)
             _paceTolerance = State(initialValue: config.paceTolerance)
+            _metronomeMinVolume = State(initialValue: config.metronomeMinVolume)
+            _metronomeMaxVolume = State(initialValue: config.metronomeMaxVolume)
+            _autoEndRun = State(initialValue: config.autoEndRun)
 
             // Determine if progressive
             let isProgressive = config.milePaces.count > 1 &&
@@ -73,8 +83,11 @@ struct ConfigurationDetailView: View {
             _evenPace = State(initialValue: PaceInput(minutes: 8, seconds: 0))
             _startPace = State(initialValue: PaceInput(minutes: 9, seconds: 0))
             _endPace = State(initialValue: PaceInput(minutes: 7, seconds: 30))
-            _baseCadence = State(initialValue: 180)
+            _cadenceOffset = State(initialValue: 0)  // Start at base BPM
             _paceTolerance = State(initialValue: 10)
+            _metronomeMinVolume = State(initialValue: 0.3)
+            _metronomeMaxVolume = State(initialValue: 1.0)
+            _autoEndRun = State(initialValue: true)
         }
     }
 
@@ -84,24 +97,41 @@ struct ConfigurationDetailView: View {
                 Section("Basic Info") {
                     TextField("Configuration Name", text: $name)
                         .autocorrectionDisabled()
+                }
 
-                    VStack(alignment: .leading, spacing: 8) {
+                Section("Distance") {
+                    // Stepper with 0.25 mile increments
+                    Stepper(value: $distanceMiles, in: 0.25...100.0, step: 0.25) {
                         HStack {
                             Text("Distance")
                             Spacer()
-                            Text(String(format: "%.1f mi", distanceMiles))
+                            Text(formatDistance(distanceMiles))
                                 .foregroundStyle(.secondary)
+                                .monospacedDigit()
                         }
-                        Slider(value: $distanceMiles, in: 1.0...100.0, step: 0.1)
                     }
 
-                    Picker("Distance Preset", selection: $distanceMiles) {
+                    // Common presets
+                    Picker("Preset", selection: $distanceMiles) {
+                        Text("1 mile").tag(1.0)
                         Text("5K (3.1 mi)").tag(3.1)
                         Text("10K (6.2 mi)").tag(6.2)
-                        Text("Half Marathon (13.1 mi)").tag(13.1)
+                        Text("Half (13.1 mi)").tag(13.1)
                         Text("Marathon (26.2 mi)").tag(26.2)
                         Text("50K (31.1 mi)").tag(31.1)
-                        Text("50 miles").tag(50.0)
+                    }
+                    .pickerStyle(.menu)
+
+                    // Custom distance input
+                    HStack {
+                        Text("Custom")
+                        Spacer()
+                        TextField("miles", value: $distanceMiles, format: .number.precision(.fractionLength(2)))
+                            .keyboardType(.decimalPad)
+                            .multilineTextAlignment(.trailing)
+                            .frame(width: 80)
+                        Text("mi")
+                            .foregroundStyle(.secondary)
                     }
                 }
 
@@ -122,15 +152,24 @@ struct ConfigurationDetailView: View {
                 Section("Settings") {
                     VStack(alignment: .leading, spacing: 8) {
                         HStack {
-                            Text("Base Cadence")
+                            Text("Metronome Tempo")
                             Spacer()
-                            Text("\(baseCadence) SPM")
+                            Text("\(effectiveBPM) BPM")
+                                .foregroundStyle(.secondary)
+                        }
+                        HStack {
+                            Text("Base from stride: \(calculatedBaseBPM)")
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                            Spacer()
+                            Text("Offset: \(cadenceOffset > 0 ? "+" : "")\(cadenceOffset)")
+                                .font(.caption)
                                 .foregroundStyle(.secondary)
                         }
                         Slider(value: Binding(
-                            get: { Double(baseCadence) },
-                            set: { baseCadence = Int($0) }
-                        ), in: 150...200, step: 5)
+                            get: { Double(cadenceOffset) },
+                            set: { cadenceOffset = Int($0) }
+                        ), in: -15...15, step: 1)
                     }
 
                     VStack(alignment: .leading, spacing: 8) {
@@ -145,6 +184,48 @@ struct ConfigurationDetailView: View {
                             set: { paceTolerance = Int($0) }
                         ), in: 5...30, step: 5)
                     }
+                }
+
+                Section("Metronome Volume") {
+                    VStack(alignment: .leading, spacing: 8) {
+                        HStack {
+                            Text("Min Volume")
+                            Spacer()
+                            Text("\(Int(metronomeMinVolume * 100))%")
+                                .foregroundStyle(.secondary)
+                        }
+                        Slider(value: $metronomeMinVolume, in: 0.0...1.0, step: 0.1)
+                            .onChange(of: metronomeMinVolume) { _, newValue in
+                                // Ensure min doesn't exceed max
+                                if newValue > metronomeMaxVolume {
+                                    metronomeMinVolume = metronomeMaxVolume
+                                }
+                            }
+                    }
+
+                    VStack(alignment: .leading, spacing: 8) {
+                        HStack {
+                            Text("Max Volume")
+                            Spacer()
+                            Text("\(Int(metronomeMaxVolume * 100))%")
+                                .foregroundStyle(.secondary)
+                        }
+                        Slider(value: $metronomeMaxVolume, in: 0.0...1.0, step: 0.1)
+                            .onChange(of: metronomeMaxVolume) { _, newValue in
+                                // Ensure max doesn't go below min
+                                if newValue < metronomeMinVolume {
+                                    metronomeMaxVolume = metronomeMinVolume
+                                }
+                            }
+                    }
+
+                    Text("Volume scales from min to max based on how far off pace you are")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+
+                Section("Run Completion") {
+                    Toggle("Auto-end when distance reached", isOn: $autoEndRun)
                 }
             }
             .navigationTitle(isEditing ? "Edit Configuration" : "New Configuration")
@@ -167,6 +248,25 @@ struct ConfigurationDetailView: View {
                 Text(validationMessage)
             }
         }
+    }
+
+    // MARK: - Computed Properties
+
+    /// Base BPM calculated from stride length and target pace
+    private var calculatedBaseBPM: Int {
+        let targetPace: Pace
+        if isProgressiveRun {
+            // Use start pace for progressive runs
+            targetPace = startPace.toPace() ?? Pace(minutes: 8, seconds: 0)
+        } else {
+            targetPace = evenPace.toPace() ?? Pace(minutes: 8, seconds: 0)
+        }
+        return settings.calculateBaseBPM(for: targetPace)
+    }
+
+    /// Effective BPM = base + offset
+    private var effectiveBPM: Int {
+        calculatedBaseBPM + cadenceOffset
     }
 
     // MARK: - Actions
@@ -210,8 +310,11 @@ struct ConfigurationDetailView: View {
             name: name.trimmingCharacters(in: .whitespacesAndNewlines),
             distance: distance,
             milePaces: milePaces,
-            baseCadence: baseCadence,
-            paceTolerance: paceTolerance
+            cadenceOffset: cadenceOffset,
+            paceTolerance: paceTolerance,
+            metronomeMinVolume: metronomeMinVolume,
+            metronomeMaxVolume: metronomeMaxVolume,
+            autoEndRun: autoEndRun
         )
 
         if isEditing {
@@ -221,6 +324,15 @@ struct ConfigurationDetailView: View {
         }
 
         dismiss()
+    }
+
+    /// Formats distance as whole number or with fraction
+    private func formatDistance(_ miles: Double) -> String {
+        if miles == miles.rounded() {
+            return String(format: "%.0f mi", miles)
+        } else {
+            return String(format: "%.2f mi", miles)
+        }
     }
 
     private func createProgressivePaces(from start: Pace, to end: Pace, mileCount: Int) -> [Pace] {
@@ -259,43 +371,74 @@ struct PaceInput {
     }
 }
 
-// MARK: - Pace Picker View
+// MARK: - Compact Pace Picker View
 
+/// A compact pace picker that shows the value as tappable text
+/// and expands to wheel pickers when editing
 struct PacePickerView: View {
     let title: String
     @Binding var pace: PaceInput
+    @State private var isExpanded: Bool = false
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
-            Text(title)
-                .font(.subheadline)
-
-            HStack {
-                Picker("Minutes", selection: $pace.minutes) {
-                    ForEach(4...20, id: \.self) { minute in
-                        Text("\(minute)").tag(minute)
-                    }
+            // Compact display - tap to expand
+            Button {
+                withAnimation(.easeInOut(duration: 0.2)) {
+                    isExpanded.toggle()
                 }
-                .pickerStyle(.wheel)
-                .frame(width: 80)
-
-                Text(":")
-                    .font(.title)
-
-                Picker("Seconds", selection: $pace.seconds) {
-                    ForEach([0, 15, 30, 45], id: \.self) { second in
-                        Text(String(format: "%02d", second)).tag(second)
-                    }
+            } label: {
+                HStack {
+                    Text(title)
+                        .foregroundStyle(.primary)
+                    Spacer()
+                    Text(formattedPace)
+                        .foregroundStyle(isExpanded ? .blue : .secondary)
+                        .monospacedDigit()
+                    Image(systemName: isExpanded ? "chevron.up" : "chevron.down")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
                 }
-                .pickerStyle(.wheel)
-                .frame(width: 80)
+            }
+            .buttonStyle(.plain)
 
-                Spacer()
+            // Expanded wheel pickers
+            if isExpanded {
+                HStack {
+                    Picker("Minutes", selection: $pace.minutes) {
+                        ForEach(4...20, id: \.self) { minute in
+                            Text("\(minute)").tag(minute)
+                        }
+                    }
+                    .pickerStyle(.wheel)
+                    .frame(width: 70, height: 100)
+                    .clipped()
 
-                Text("min/mile")
-                    .foregroundStyle(.secondary)
+                    Text(":")
+                        .font(.title2)
+
+                    Picker("Seconds", selection: $pace.seconds) {
+                        ForEach(Array(stride(from: 0, to: 60, by: 5)), id: \.self) { second in
+                            Text(String(format: "%02d", second)).tag(second)
+                        }
+                    }
+                    .pickerStyle(.wheel)
+                    .frame(width: 70, height: 100)
+                    .clipped()
+
+                    Spacer()
+
+                    Text("min/mi")
+                        .foregroundStyle(.secondary)
+                        .font(.caption)
+                }
+                .transition(.opacity.combined(with: .move(edge: .top)))
             }
         }
+    }
+
+    private var formattedPace: String {
+        String(format: "%d:%02d min/mi", pace.minutes, pace.seconds)
     }
 }
 

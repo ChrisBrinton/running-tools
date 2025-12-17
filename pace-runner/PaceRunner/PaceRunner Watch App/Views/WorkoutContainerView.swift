@@ -78,7 +78,7 @@ struct WorkoutContainerView: View {
         name: "Preview Run",
         distance: Distance(miles: 5),
         targetPace: Pace(minutes: 8, seconds: 0),
-        baseCadence: 180,
+        cadenceOffset: 0,
         paceTolerance: 5
     )
     WorkoutContainerView(configuration: config, workoutManager: WorkoutManagerPreview(), syncManager: nil, onExit: {})

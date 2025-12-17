@@ -46,6 +46,9 @@ class GPSManager: NSObject, GPSManagerProtocol {
     private let maxLocationAge: TimeInterval = 10.0 // seconds
     private let maxRealisticSpeed: CLLocationSpeed = 15.0 // m/s (~3:30/mile pace)
 
+    // Debug callback for filtered points
+    var onLocationFiltered: (() -> Void)?
+
     // MARK: - Initialization
 
     init(locationManager: LocationManagerProtocol = CLLocationManager()) {
@@ -92,6 +95,7 @@ class GPSManager: NSObject, GPSManagerProtocol {
     private func processLocation(_ location: CLLocation) {
         // Quality filtering per contract requirements
         guard isValidLocation(location) else {
+            onLocationFiltered?() // Notify that a point was filtered
             return
         }
 
@@ -111,6 +115,7 @@ class GPSManager: NSObject, GPSManagerProtocol {
             // Reject unrealistic speeds (GPS spikes)
             guard impliedSpeed <= maxRealisticSpeed else {
                 // Log spike but don't update distance
+                onLocationFiltered?() // Notify that a point was filtered (spike)
                 return
             }
 

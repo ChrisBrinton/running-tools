@@ -40,10 +40,23 @@ public struct WorkoutState: Equatable {
 
     /// Current pace (smoothed via EWMA)
     /// Updated every GPS sample
+    /// DEPRECATED: Use paceWindows instead
     public var currentPace: Pace?
+
+    /// Multi-window pace calculations
+    /// Provides split, last mile, 3min, and 1min paces
+    public var paceWindows: PaceWindows
 
     /// Time elapsed since workout start (seconds)
     public var elapsedTime: TimeInterval
+
+    /// Distance at start of current mile (meters)
+    /// Used to calculate split pace
+    public var currentMileSplitStart: Double
+
+    /// Time at start of current mile (seconds since workout start)
+    /// Used to calculate split pace
+    public var currentMileSplitStartTime: TimeInterval
 
     /// Mile markers reached so far
     /// Populated when runner crosses each mile threshold
@@ -52,6 +65,21 @@ public struct WorkoutState: Equatable {
     /// Current mile number (1-based)
     /// Increments when runner crosses mile marker
     public var currentMile: Int
+
+    // MARK: - Grace Period
+
+    /// Whether workout is still in the initial grace period
+    /// During grace period: metronome plays but no pace deviation alerts
+    public var isInGracePeriod: Bool
+
+    /// When movement was first detected (grace period started)
+    public var gracePeriodStartTime: Date?
+
+    /// Duration of grace period in seconds (default 15)
+    public static let gracePeriodDuration: TimeInterval = 15.0
+
+    /// Minimum speed to detect movement (m/s) - roughly 3 mph walking pace
+    public static let movementThreshold: Double = 0.5
 
     // MARK: - Status Enum
 
@@ -80,9 +108,23 @@ public struct WorkoutState: Equatable {
         self.startTime = Date()
         self.distanceCovered = 0.0
         self.currentPace = nil
+        self.paceWindows = PaceWindows()
         self.elapsedTime = 0.0
+        self.currentMileSplitStart = 0.0
+        self.currentMileSplitStartTime = 0.0
         self.mileSplits = []
         self.currentMile = 1
+        self.isInGracePeriod = true // Start in grace period
+        self.gracePeriodStartTime = nil // Set when movement detected
+    }
+
+    /// Whether grace period has expired
+    /// - Returns: true if grace period is over and alerts should be enabled
+    public var isGracePeriodExpired: Bool {
+        guard let startTime = gracePeriodStartTime else {
+            return false // Movement not yet detected
+        }
+        return Date().timeIntervalSince(startTime) >= Self.gracePeriodDuration
     }
 
     // MARK: - Computed Properties
@@ -107,6 +149,32 @@ public struct WorkoutState: Equatable {
     public var targetPace: Pace {
         let index = min(currentMile - 1, configuration.milePaces.count - 1)
         return configuration.milePaces[index]
+    }
+
+    /// Current mile split pace
+    /// Calculates pace for distance/time since start of current mile
+    /// - Returns: Split pace, or nil if no distance covered yet in current mile
+    public var splitPace: Pace? {
+        let splitDistance = distanceCovered - currentMileSplitStart
+        let splitTime = elapsedTime - currentMileSplitStartTime
+
+        guard splitDistance > 0, splitTime > 0 else { return nil }
+
+        // Calculate pace in seconds per mile
+        let secondsPerMeter = splitTime / splitDistance
+        let secondsPerMile = secondsPerMeter * 1609.34
+
+        let totalSeconds = Int(secondsPerMile)
+
+        // Validate range (4:00 - 20:00/mile)
+        guard totalSeconds >= 240 && totalSeconds <= 1200 else {
+            return nil
+        }
+
+        let minutes = totalSeconds / 60
+        let seconds = totalSeconds % 60
+
+        return Pace(minutes: minutes, seconds: seconds)
     }
 
     /// Pace deviation from target in seconds

@@ -13,13 +13,18 @@ final class WorkoutViewModel: ObservableObject {
     private let syncManager: SyncManagerProtocol?
     private var cancellables = Set<AnyCancellable>()
 
+    /// App settings for display formatting
+    let settings: AppSettings
+
     init(
         workoutManager: WorkoutManagerProtocol,
         configuration: RunConfiguration,
-        syncManager: SyncManagerProtocol? = nil
+        syncManager: SyncManagerProtocol? = nil,
+        settings: AppSettings = AppSettings.load()
     ) {
         self.workoutManager = workoutManager
         self.syncManager = syncManager
+        self.settings = settings
         self.state = WorkoutState(configuration: configuration)
         bindState()
     }
@@ -96,5 +101,29 @@ final class WorkoutViewModel: ObservableObject {
         let minutes = Int(state.elapsedTime) / 60
         let seconds = Int(state.elapsedTime) % 60
         return String(format: "%d:%02d", minutes, seconds)
+    }
+
+    // MARK: - Pace Window Labels
+
+    /// Label for slow (master) pace window based on settings
+    var slowPaceLabel: String {
+        let miles = settings.slowAverageMiles
+        if miles == 1.0 {
+            return "1mi"
+        } else if miles == floor(miles) {
+            return "\(Int(miles))mi"
+        } else {
+            return String(format: "%.1fmi", miles)
+        }
+    }
+
+    /// Label for medium pace window based on settings
+    var mediumPaceLabel: String {
+        "\(settings.mediumAverageSeconds)s"
+    }
+
+    /// Label for fast pace window based on settings
+    var fastPaceLabel: String {
+        "\(settings.fastAverageSeconds)s"
     }
 }

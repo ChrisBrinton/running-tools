@@ -12,6 +12,9 @@ struct GPSSample {
     /// Instantaneous speed in meters/second.
     let speed: Double
 
+    /// Cumulative distance covered at this sample (in meters)
+    let cumulativeDistance: Double
+
     /// Seconds required to travel one meter.
     var secondsPerMeter: Double {
         guard speed > 0 else { return .infinity }
@@ -23,9 +26,10 @@ struct GPSSample {
         speed.isFinite && speed > 0 && speed < 15.0
     }
 
-    init(location: CLLocation) {
+    init(location: CLLocation, cumulativeDistance: Double) {
         self.location = location
         self.timestamp = location.timestamp
+        self.cumulativeDistance = cumulativeDistance
         if location.speed.isFinite, location.speed >= 0 {
             self.speed = location.speed
         } else {
@@ -33,9 +37,10 @@ struct GPSSample {
         }
     }
 
-    init(timestamp: Date, speed: Double) {
+    init(timestamp: Date, speed: Double, cumulativeDistance: Double) {
         self.location = nil
         self.timestamp = timestamp
         self.speed = speed
+        self.cumulativeDistance = cumulativeDistance
     }
 }
