@@ -11,6 +11,7 @@ final class WorkoutViewModel: ObservableObject {
 
     private let workoutManager: WorkoutManagerProtocol
     private let syncManager: SyncManagerProtocol?
+    private let workoutStore: WatchWorkoutStore?
     private var cancellables = Set<AnyCancellable>()
 
     /// App settings for display formatting
@@ -20,10 +21,12 @@ final class WorkoutViewModel: ObservableObject {
         workoutManager: WorkoutManagerProtocol,
         configuration: RunConfiguration,
         syncManager: SyncManagerProtocol? = nil,
+        workoutStore: WatchWorkoutStore? = nil,
         settings: AppSettings = AppSettings.load()
     ) {
         self.workoutManager = workoutManager
         self.syncManager = syncManager
+        self.workoutStore = workoutStore
         self.settings = settings
         self.state = WorkoutState(configuration: configuration)
         bindState()
@@ -75,7 +78,15 @@ final class WorkoutViewModel: ObservableObject {
         do {
             print("WorkoutViewModel.end() invoked")
             let summary = try workoutManager.endWorkout()
-            syncManager?.syncWorkoutSummary(summary)
+
+            // Save locally first (ensures data survives even if sync fails)
+            if let store = workoutStore {
+                store.save(summary)
+            } else {
+                // Fallback: direct sync if no store available
+                syncManager?.syncWorkoutSummary(summary)
+            }
+
             isShowingSummary = true
         } catch {
             print("WorkoutViewModel.end error: \(error)")

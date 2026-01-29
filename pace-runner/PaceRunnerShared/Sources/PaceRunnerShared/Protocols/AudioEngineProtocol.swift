@@ -68,6 +68,10 @@ public protocol AudioEngineProtocol: AnyObject {
     ///   - audioBeatsEnabled: Whether regular metronome beats are enabled
     func configureEmphasisBeat(enabled: Bool, interval: Int, audioBeatsEnabled: Bool)
 
+    /// Configures the sound profile for beat generation
+    /// - Parameter profile: The sound profile to use for regular and emphasis beats
+    func configureSoundProfile(_ profile: BeatSoundProfile)
+
     /// Plays a debug sound (woodblock) for GPS filtering feedback
     func playDebugSound()
 

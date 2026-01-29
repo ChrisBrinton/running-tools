@@ -13,6 +13,7 @@ struct PaceRunner_Watch_AppApp: App {
     private let workoutManager: WorkoutManagerProtocol
     private let syncManager: SyncManagerProtocol
     @StateObject private var configurationStore: ConfigurationStore
+    @StateObject private var workoutStore: WatchWorkoutStore
 
     init() {
         let syncManager = SyncManager()
@@ -24,6 +25,7 @@ struct PaceRunner_Watch_AppApp: App {
             audioEngine: AudioEngine()
         )
         _configurationStore = StateObject(wrappedValue: ConfigurationStore(syncManager: syncManager))
+        _workoutStore = StateObject(wrappedValue: WatchWorkoutStore(syncManager: syncManager))
     }
 
     var body: some Scene {
@@ -34,6 +36,7 @@ struct PaceRunner_Watch_AppApp: App {
                         configuration: configuration,
                         workoutManager: workoutManager,
                         syncManager: syncManager,
+                        workoutStore: workoutStore,
                         onExit: { configurationStore.clearSelection() }
                     )
                 } else {

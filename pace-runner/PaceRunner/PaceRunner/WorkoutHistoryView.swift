@@ -103,6 +103,8 @@ private struct WorkoutSummaryRow: View {
 
 private struct WorkoutSummaryDetailView: View {
     let summary: WorkoutSummary
+    @State private var showingShareSheet = false
+    @State private var debugLogFileURL: URL?
 
     var body: some View {
         List {
@@ -129,9 +131,73 @@ private struct WorkoutSummaryDetailView: View {
                     }
                 }
             }
+
+            // Debug log export section
+            Section("Debug Data") {
+                if let debugLog = summary.debugLog {
+                    HStack {
+                        VStack(alignment: .leading, spacing: 4) {
+                            Text("\(debugLog.events.count) events recorded")
+                                .font(.body)
+                            Text("Version: \(debugLog.appVersion)")
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                        }
+                        Spacer()
+                        Button {
+                            debugLogFileURL = createDebugLogFile(debugLog: debugLog)
+                            if debugLogFileURL != nil {
+                                showingShareSheet = true
+                            }
+                        } label: {
+                            Label("Export", systemImage: "square.and.arrow.up")
+                        }
+                    }
+                } else {
+                    Text("No debug data available.")
+                        .foregroundStyle(.secondary)
+                }
+            }
         }
         .navigationTitle(summary.configurationName)
+        .sheet(isPresented: $showingShareSheet) {
+            if let fileURL = debugLogFileURL {
+                ShareSheet(items: [fileURL])
+            }
+        }
     }
+
+    /// Creates a temporary file with the debug log content for sharing as an attachment
+    private func createDebugLogFile(debugLog: DebugLog) -> URL? {
+        let dateFormatter = DateFormatter()
+        dateFormatter.dateFormat = "yyyy-MM-dd_HHmmss"
+        let timestamp = dateFormatter.string(from: summary.startTime)
+        let fileName = "pacerunner_debug_\(timestamp).txt"
+
+        let tempDir = FileManager.default.temporaryDirectory
+        let fileURL = tempDir.appendingPathComponent(fileName)
+
+        do {
+            let content = debugLog.exportAsText()
+            try content.write(to: fileURL, atomically: true, encoding: .utf8)
+            return fileURL
+        } catch {
+            print("Failed to create debug log file: \(error)")
+            return nil
+        }
+    }
+}
+
+// MARK: - Share Sheet
+
+private struct ShareSheet: UIViewControllerRepresentable {
+    let items: [Any]
+
+    func makeUIViewController(context: Context) -> UIActivityViewController {
+        UIActivityViewController(activityItems: items, applicationActivities: nil)
+    }
+
+    func updateUIViewController(_ uiViewController: UIActivityViewController, context: Context) {}
 }
 
 // MARK: - Reusable Views

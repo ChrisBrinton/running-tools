@@ -5,8 +5,19 @@ struct WorkoutContainerView: View {
     @StateObject private var viewModel: WorkoutViewModel
     private let onExit: () -> Void
 
-    init(configuration: RunConfiguration, workoutManager: WorkoutManagerProtocol, syncManager: SyncManagerProtocol?, onExit: @escaping () -> Void) {
-        _viewModel = StateObject(wrappedValue: WorkoutViewModel(workoutManager: workoutManager, configuration: configuration, syncManager: syncManager))
+    init(
+        configuration: RunConfiguration,
+        workoutManager: WorkoutManagerProtocol,
+        syncManager: SyncManagerProtocol?,
+        workoutStore: WatchWorkoutStore? = nil,
+        onExit: @escaping () -> Void
+    ) {
+        _viewModel = StateObject(wrappedValue: WorkoutViewModel(
+            workoutManager: workoutManager,
+            configuration: configuration,
+            syncManager: syncManager,
+            workoutStore: workoutStore
+        ))
         self.onExit = onExit
     }
 

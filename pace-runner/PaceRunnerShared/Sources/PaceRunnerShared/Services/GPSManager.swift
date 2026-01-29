@@ -12,6 +12,9 @@ public final class GPSManager: NSObject, GPSManagerProtocol {
     public private(set) var totalDistance: Double = 0
     public private(set) var isTracking: Bool = false
 
+    /// Callback invoked when a GPS location is filtered out (for debug sounds)
+    public var onLocationFiltered: (() -> Void)?
+
     public var currentLocation: CLLocation? {
         lastLocation
     }
@@ -58,7 +61,11 @@ public final class GPSManager: NSObject, GPSManagerProtocol {
 extension GPSManager: CLLocationManagerDelegate {
     public func locationManager(_ manager: CLLocationManager, didUpdateLocations locations: [CLLocation]) {
         for location in locations {
-            guard isValid(location: location) else { continue }
+            guard isValid(location: location) else {
+                // Notify that a location was filtered (for debug sounds)
+                onLocationFiltered?()
+                continue
+            }
 
             if let last = lastLocation {
                 let delta = location.distance(from: last)

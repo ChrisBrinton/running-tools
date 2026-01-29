@@ -30,6 +30,13 @@ public struct AppSettings: Codable, Equatable {
     /// Default: true (companion mode)
     public var companionMode: Bool
 
+    /// Whether to use HealthKit distance instead of GPS (standalone mode only)
+    /// - true: Use distance from HKLiveWorkoutBuilder (matches Apple Workout app)
+    /// - false: Use GPS-calculated distance with our own filtering
+    /// Note: Only applies when companionMode=false (has no effect in companion mode)
+    /// Default: true (use HealthKit for better accuracy)
+    public var useHealthKitDistance: Bool
+
     // MARK: - Audio Settings
 
     /// Whether to play audio tempo beats during workouts
@@ -144,6 +151,7 @@ public struct AppSettings: Codable, Equatable {
     public init() {
         // Workout mode defaults
         self.companionMode = true // Default to companion mode (works alongside native Workout app)
+        self.useHealthKitDistance = true // Use HealthKit distance for accuracy (standalone mode only)
 
         // Audio defaults
         self.audioBeatsEnabled = true
@@ -178,6 +186,7 @@ public struct AppSettings: Codable, Equatable {
     /// Creates AppSettings with custom values
     /// - Parameters:
     ///   - companionMode: Run alongside native Workout app (no HealthKit session)
+    ///   - useHealthKitDistance: Use HealthKit distance in standalone mode (matches Workout app)
     ///   - audioBeatsEnabled: Enable tempo beats
     ///   - voiceAlertsEnabled: Enable voice alerts
     ///   - alertThrottleInterval: Minimum seconds between alerts (30/60/90/120)
@@ -199,6 +208,7 @@ public struct AppSettings: Codable, Equatable {
     ///   - defaultTolerance: Default tolerance for new configs
     public init(
         companionMode: Bool = true,
+        useHealthKitDistance: Bool = true,
         audioBeatsEnabled: Bool = true,
         voiceAlertsEnabled: Bool = true,
         alertThrottleInterval: Int = 30,
@@ -227,6 +237,7 @@ public struct AppSettings: Codable, Equatable {
                      "Master volume must be between 0.0 and 1.0")
 
         self.companionMode = companionMode
+        self.useHealthKitDistance = useHealthKitDistance
         self.audioBeatsEnabled = audioBeatsEnabled
         self.voiceAlertsEnabled = voiceAlertsEnabled
         self.alertThrottleInterval = alertThrottleInterval
@@ -277,6 +288,7 @@ public struct AppSettings: Codable, Equatable {
 
         // Required properties
         self.companionMode = try container.decode(Bool.self, forKey: .companionMode)
+        self.useHealthKitDistance = try container.decodeIfPresent(Bool.self, forKey: .useHealthKitDistance) ?? true
         self.audioBeatsEnabled = try container.decode(Bool.self, forKey: .audioBeatsEnabled)
         self.voiceAlertsEnabled = try container.decode(Bool.self, forKey: .voiceAlertsEnabled)
         self.alertThrottleInterval = try container.decode(Int.self, forKey: .alertThrottleInterval)

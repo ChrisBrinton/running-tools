@@ -48,13 +48,57 @@ class WorkoutManager: NSObject, WorkoutManagerProtocol {
     private var workoutBuilder: HKLiveWorkoutBuilder?
     private var cancellables = Set<AnyCancellable>()
 
+    /// Whether to use HealthKit distance vs GPS distance
+    private var useHealthKitDistance: Bool = false
+
+    /// Anchored query for HealthKit distance samples (used in companion mode)
+    private var distanceQuery: HKAnchoredObjectQuery?
+
+    /// Accumulated distance from HealthKit samples (meters)
+    private var healthKitAccumulatedDistance: Double = 0
+
+    /// Anchor for tracking which samples we've already processed
+    private var distanceQueryAnchor: HKQueryAnchor?
+
+    /// Lock for thread-safe access to healthKitAccumulatedDistance
+    private let healthKitDistanceLock = NSLock()
+
+    /// Whether we've synced our start time with HealthKit's first sample
+    /// In companion mode, we wait for the first sample to establish the "real" start time
+    private var hasHealthKitStartTimeSync: Bool = false
+
+    /// The effective start time (may be adjusted when first HealthKit sample arrives)
     private var startTime: Date?
+
+    /// The user's tap time (when they pressed Start in PaceRunner)
+    private var userTapTime: Date?
+
+    /// Total time spent paused (seconds) - excluded from elapsed time calculation
+    private var totalPausedDuration: TimeInterval = 0
+
+    /// When the current pause started (nil if not paused)
+    private var pauseStartTime: Date?
+
+    /// Query for finding active workouts in companion mode
+    private var activeWorkoutQuery: HKSampleQuery?
+
+    /// Timer for periodic recheck of active workouts (in case Workout app starts after PaceRunner)
+    private var workoutRecheckTimer: Timer?
+
+    /// Number of workout rechecks performed
+    private var workoutRecheckCount: Int = 0
+
+    /// Maximum number of rechecks to perform
+    private let maxWorkoutRechecks = 3
 
     // Lock to prevent race conditions between location and pace updates
     private let stateLock = NSLock()
 
     // Flag to prevent multiple completion announcements
     private var hasAnnouncedCompletion = false
+
+    /// Debug log for capturing timing and sync events
+    private var debugLog = DebugLog()
 
     // MARK: - Initialization
 
@@ -81,6 +125,27 @@ class WorkoutManager: NSObject, WorkoutManagerProtocol {
 
     func startWorkout(with configuration: RunConfiguration) throws {
         let settings = settingsProvider()
+
+        // Initialize fresh debug log for this workout
+        debugLog = DebugLog()
+        debugLog.logTiming("Workout started", data: [
+            "config": configuration.name,
+            "targetDistance": String(format: "%.2f", configuration.distance.miles),
+            "companionMode": String(settings.companionMode),
+            "useHealthKitDistance": String(settings.useHealthKitDistance),
+            "paceCalibrationSeconds": String(settings.paceCalibrationSeconds),
+            "calibrationFactor": String(format: "%.4f", settings.distanceCalibrationFactor())
+        ])
+
+        // Debug: log calibration settings at workout start
+        print("WorkoutManager.startWorkout: paceCalibrationSeconds=\(settings.paceCalibrationSeconds)")
+        print("WorkoutManager.startWorkout: distanceCalibrationFactor=\(settings.distanceCalibrationFactor())")
+        print("WorkoutManager.startWorkout: strideLengthInches=\(settings.strideLengthInches)")
+
+        // Set distance source based on settings
+        // Use HealthKit distance in both modes when setting is enabled
+        useHealthKitDistance = settings.useHealthKitDistance
+        print("WorkoutManager.startWorkout: useHealthKitDistance=\(useHealthKitDistance), companionMode=\(settings.companionMode)")
 
         // Create workout session only if NOT in companion mode
         // In companion mode, user starts workout via native Workout app
@@ -115,7 +180,26 @@ class WorkoutManager: NSObject, WorkoutManagerProtocol {
         var state = WorkoutState(configuration: configuration)
         state.status = .running
         stateSubject.send(state)
-        startTime = Date()
+
+        // Record when user tapped start
+        userTapTime = Date()
+
+        // In companion mode with HealthKit distance, we'll sync start time with first sample
+        // This ensures our timing matches the Workout app's timing
+        let isCompanionWithHealthKit = settings.companionMode && useHealthKitDistance
+        hasHealthKitStartTimeSync = !isCompanionWithHealthKit  // Already synced if not using companion+HK
+
+        // Use tap time initially; will be adjusted when first HealthKit sample arrives in companion mode
+        startTime = userTapTime
+        print("WorkoutManager: userTapTime=\(userTapTime!), isCompanionWithHealthKit=\(isCompanionWithHealthKit)")
+
+        // Log tap time for debug
+        let dateFormatter = ISO8601DateFormatter()
+        dateFormatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+        debugLog.logTiming("User tapped Start", data: [
+            "tapTime": dateFormatter.string(from: userTapTime!),
+            "needsHealthKitSync": String(isCompanionWithHealthKit)
+        ])
 
         // Setup services
         do {
@@ -168,6 +252,19 @@ class WorkoutManager: NSObject, WorkoutManagerProtocol {
         // Start GPS tracking
         gpsManager.startTracking()
 
+        // Start HealthKit distance query if enabled
+        // In companion mode, this queries samples from the Workout app
+        // In standalone mode, this queries samples from our own workout session
+        if useHealthKitDistance && isHealthKitAvailable {
+            startHealthKitDistanceQuery()
+
+            // In companion mode, start periodic rechecks for workouts that might start after PaceRunner
+            // This handles the case where user starts PaceRunner during Workout app's countdown
+            if settings.companionMode {
+                startWorkoutRecheckTimer()
+            }
+        }
+
         // Start tempo beats at effective BPM (calculated from stride + offset)
         do {
             let effectiveBPM = configuration.effectiveBPM(settings: settings)
@@ -178,8 +275,8 @@ class WorkoutManager: NSObject, WorkoutManagerProtocol {
                 audioBeatsEnabled: settings.audioBeatsEnabled
             )
             try audioEngine.startTempoBeats(bpm: effectiveBPM)
-            // Start silent during grace period (will turn on when grace period ends)
-            audioEngine.setMetronomeVolume(0.0)
+            // Start metronome immediately at full volume
+            audioEngine.setMetronomeVolume(1.0)
         } catch {
             print("AudioEngine failed to start tempo beats: \(error)")
         }
@@ -189,6 +286,16 @@ class WorkoutManager: NSObject, WorkoutManagerProtocol {
         guard var state = stateSubject.value else {
             throw WorkoutManagerError.noActiveWorkout
         }
+
+        // Record when pause started
+        pauseStartTime = Date()
+        print("WorkoutManager: Paused at \(pauseStartTime!)")
+
+        // Log pause event
+        debugLog.logPause("Workout paused", data: [
+            "elapsedTime": String(format: "%.1f", state.elapsedTime),
+            "distance": String(format: "%.3f", state.distanceCovered / 1609.34)
+        ])
 
         workoutSession?.pause()
         gpsManager.stopTracking()
@@ -202,6 +309,20 @@ class WorkoutManager: NSObject, WorkoutManagerProtocol {
         guard var state = stateSubject.value else {
             throw WorkoutManagerError.noActiveWorkout
         }
+
+        // Calculate how long we were paused and add to total
+        if let pauseStart = pauseStartTime {
+            let pauseDuration = Date().timeIntervalSince(pauseStart)
+            totalPausedDuration += pauseDuration
+            print("WorkoutManager: Resumed after \(String(format: "%.1f", pauseDuration))s pause, total paused: \(String(format: "%.1f", totalPausedDuration))s")
+
+            // Log resume event
+            debugLog.logPause("Workout resumed", data: [
+                "pauseDuration": String(format: "%.1f", pauseDuration),
+                "totalPausedDuration": String(format: "%.1f", totalPausedDuration)
+            ])
+        }
+        pauseStartTime = nil
 
         workoutSession?.resume()
         gpsManager.startTracking()
@@ -224,6 +345,14 @@ class WorkoutManager: NSObject, WorkoutManagerProtocol {
         guard var state = currentState else {
             throw WorkoutManagerError.noActiveWorkout
         }
+
+        // Log workout end
+        debugLog.logTiming("Workout ended", data: [
+            "elapsedTime": String(format: "%.1f", state.elapsedTime),
+            "totalDistance": String(format: "%.4f", state.distanceCovered / 1609.34),
+            "totalPausedDuration": String(format: "%.1f", totalPausedDuration),
+            "milesCompleted": String(state.mileSplits.count)
+        ])
 
         // Stop services
         gpsManager.stopTracking()
@@ -250,8 +379,8 @@ class WorkoutManager: NSObject, WorkoutManagerProtocol {
         state.status = .ended
         stateSubject.send(state)
 
-        // Create summary
-        let summary = state.toSummary()
+        // Create summary with debug log
+        let summary = state.toSummary(debugLog: debugLog)
 
         // Cleanup
         cleanup()
@@ -284,13 +413,310 @@ class WorkoutManager: NSObject, WorkoutManagerProtocol {
             .store(in: &cancellables)
     }
 
+    // MARK: - HealthKit Distance Query
+
+    /// Starts an anchored object query to receive real-time distance samples from HealthKit
+    /// Works in both standalone mode (our own workout) and companion mode (Workout app's samples)
+    private func startHealthKitDistanceQuery() {
+        let distanceType = HKQuantityType(.distanceWalkingRunning)
+
+        // Reset accumulated distance
+        healthKitDistanceLock.lock()
+        healthKitAccumulatedDistance = 0
+        healthKitDistanceLock.unlock()
+
+        // Create predicate for samples from workout start time onwards
+        let predicate = HKQuery.predicateForSamples(
+            withStart: startTime ?? Date(),
+            end: nil,
+            options: .strictStartDate
+        )
+
+        let query = HKAnchoredObjectQuery(
+            type: distanceType,
+            predicate: predicate,
+            anchor: distanceQueryAnchor,
+            limit: HKObjectQueryNoLimit
+        ) { [weak self] query, samples, deletedObjects, newAnchor, error in
+            self?.processDistanceSamples(samples, newAnchor: newAnchor, error: error)
+        }
+
+        // Set update handler to receive new samples as they arrive
+        query.updateHandler = { [weak self] query, samples, deletedObjects, newAnchor, error in
+            self?.processDistanceSamples(samples, newAnchor: newAnchor, error: error)
+        }
+
+        distanceQuery = query
+        healthStore.execute(query)
+        print("WorkoutManager: Started HealthKit distance query")
+    }
+
+    /// Processes distance samples from HealthKit query
+    private func processDistanceSamples(_ samples: [HKSample]?, newAnchor: HKQueryAnchor?, error: Error?) {
+        if let error = error {
+            print("WorkoutManager: HealthKit distance query error: \(error)")
+            return
+        }
+
+        // Update anchor for next query
+        distanceQueryAnchor = newAnchor
+
+        guard let quantitySamples = samples as? [HKQuantitySample], !quantitySamples.isEmpty else {
+            return
+        }
+
+        // On first sample, sync our start time with the Workout app's timing
+        if !hasHealthKitStartTimeSync {
+            syncStartTimeWithHealthKit(samples: quantitySamples)
+        }
+
+        // Sum up the distance from new samples
+        var newDistance: Double = 0
+        for sample in quantitySamples {
+            let meters = sample.quantity.doubleValue(for: .meter())
+            newDistance += meters
+        }
+
+        // Update accumulated distance thread-safely
+        healthKitDistanceLock.lock()
+        healthKitAccumulatedDistance += newDistance
+        let totalDistance = healthKitAccumulatedDistance
+        healthKitDistanceLock.unlock()
+
+        print("WorkoutManager: HealthKit distance update: +\(String(format: "%.1f", newDistance))m, total=\(String(format: "%.1f", totalDistance))m")
+    }
+
+    /// Syncs our start time with the first HealthKit sample's timestamp
+    /// This ensures our elapsed time matches the Workout app when in companion mode
+    private func syncStartTimeWithHealthKit(samples: [HKQuantitySample]) {
+        // First, try to find the active workout and use its start time (more accurate)
+        queryActiveWorkoutStartTime { [weak self] workoutStartTime in
+            guard let self = self else { return }
+
+            let syncTime: Date
+            if let workoutStart = workoutStartTime {
+                // Use the actual workout start time
+                syncTime = workoutStart
+                print("WorkoutManager: Using active workout start time")
+            } else {
+                // Fall back to first sample's start date
+                let earliestSample = samples.min(by: { $0.startDate < $1.startDate })
+                guard let firstSampleTime = earliestSample?.startDate else { return }
+                syncTime = firstSampleTime
+                print("WorkoutManager: Using first sample start time (no active workout found)")
+            }
+
+            self.applyStartTimeSync(syncTime)
+        }
+    }
+
+    /// Queries HealthKit for an active running workout to get its start time
+    private func queryActiveWorkoutStartTime(completion: @escaping (Date?) -> Void) {
+        let workoutType = HKObjectType.workoutType()
+
+        // Look for workouts that started recently (within last 5 minutes of our tap time)
+        let fiveMinutesAgo = (userTapTime ?? Date()).addingTimeInterval(-300)
+        let predicate = HKQuery.predicateForSamples(
+            withStart: fiveMinutesAgo,
+            end: nil,
+            options: .strictStartDate
+        )
+
+        let sortDescriptor = NSSortDescriptor(key: HKSampleSortIdentifierStartDate, ascending: false)
+
+        let query = HKSampleQuery(
+            sampleType: workoutType,
+            predicate: predicate,
+            limit: 5,
+            sortDescriptors: [sortDescriptor]
+        ) { [weak self] _, samples, error in
+            if let error = error {
+                print("WorkoutManager: Active workout query error: \(error)")
+                completion(nil)
+                return
+            }
+
+            // Find a running workout that's still in progress (no end date or end date in future)
+            if let workouts = samples as? [HKWorkout] {
+                for workout in workouts {
+                    // Check if it's a running workout that's still in progress
+                    // A workout is "in progress" if its end date is very close to now (within 30 seconds)
+                    // or if the duration suggests it's still running
+                    if workout.workoutActivityType == .running {
+                        let timeSinceEnd = Date().timeIntervalSince(workout.endDate)
+                        // If the workout ended less than 30 seconds ago, consider it still active
+                        // (HealthKit may update endDate as workout progresses)
+                        if timeSinceEnd < 30 {
+                            print("WorkoutManager: Found active workout starting at \(workout.startDate)")
+                            completion(workout.startDate)
+                            return
+                        }
+                    }
+                }
+            }
+
+            print("WorkoutManager: No active running workout found")
+            completion(nil)
+        }
+
+        activeWorkoutQuery = query
+        healthStore.execute(query)
+    }
+
+    /// Applies the synced start time
+    private func applyStartTimeSync(_ syncTime: Date) {
+        let oldStartTime = startTime ?? Date()
+        let timeDiff = syncTime.timeIntervalSince(oldStartTime)
+
+        print("WorkoutManager: Syncing start time with HealthKit")
+        print("  - User tap time: \(userTapTime ?? Date())")
+        print("  - Sync time: \(syncTime)")
+        print("  - Time difference: \(String(format: "%.1f", timeDiff))s")
+
+        // Log sync event
+        let dateFormatter = ISO8601DateFormatter()
+        dateFormatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+        debugLog.logSync("Start time synced", data: [
+            "oldStartTime": dateFormatter.string(from: oldStartTime),
+            "newStartTime": dateFormatter.string(from: syncTime),
+            "timeDiffSeconds": String(format: "%.3f", timeDiff),
+            "userTapTime": dateFormatter.string(from: userTapTime ?? Date())
+        ])
+
+        // Update start time to match HealthKit
+        startTime = syncTime
+
+        // Reset pace calculator so it starts fresh from the synced time
+        paceCalculator.reset()
+
+        // Reset mile tracker
+        mileTracker.reset()
+
+        hasHealthKitStartTimeSync = true
+        print("WorkoutManager: Start time synced to HealthKit workout")
+    }
+
+    /// Stops the HealthKit distance query
+    private func stopHealthKitDistanceQuery() {
+        if let query = distanceQuery {
+            healthStore.stop(query)
+            distanceQuery = nil
+            print("WorkoutManager: Stopped HealthKit distance query")
+        }
+    }
+
+    // MARK: - Workout Recheck Timer
+
+    /// Starts a timer to periodically check for active workouts that might start after PaceRunner
+    /// Fires at 5s intervals, up to 3 times (checking at 5s, 10s, 15s)
+    private func startWorkoutRecheckTimer() {
+        workoutRecheckCount = 0
+        print("WorkoutManager: Starting workout recheck timer (will check at 5s, 10s, 15s)")
+
+        // Run on main thread for timer
+        DispatchQueue.main.async { [weak self] in
+            self?.workoutRecheckTimer = Timer.scheduledTimer(withTimeInterval: 5.0, repeats: true) { [weak self] _ in
+                self?.performWorkoutRecheck()
+            }
+        }
+    }
+
+    /// Stops the workout recheck timer
+    private func stopWorkoutRecheckTimer() {
+        workoutRecheckTimer?.invalidate()
+        workoutRecheckTimer = nil
+    }
+
+    /// Performs a recheck for active workouts that might have started after PaceRunner
+    private func performWorkoutRecheck() {
+        workoutRecheckCount += 1
+        print("WorkoutManager: Performing workout recheck #\(workoutRecheckCount)")
+
+        // Stop if we've done enough rechecks
+        if workoutRecheckCount >= maxWorkoutRechecks {
+            print("WorkoutManager: Max rechecks reached, stopping timer")
+            stopWorkoutRecheckTimer()
+            return
+        }
+
+        // Query for active workouts
+        queryActiveWorkoutStartTime { [weak self] workoutStartTime in
+            guard let self = self,
+                  let workoutStart = workoutStartTime,
+                  let currentStartTime = self.startTime,
+                  let tapTime = self.userTapTime else {
+                return
+            }
+
+            // Check if this workout started AFTER our current sync time
+            // but still within a reasonable window of when the user tapped start (20 seconds)
+            let workoutStartedAfterSync = workoutStart > currentStartTime
+            let workoutWithinWindow = workoutStart.timeIntervalSince(tapTime) < 20
+
+            if workoutStartedAfterSync && workoutWithinWindow {
+                print("WorkoutManager: Found newer workout that started after PaceRunner")
+                print("  - Current sync time: \(currentStartTime)")
+                print("  - New workout start: \(workoutStart)")
+                self.applyStartTimeSync(workoutStart)
+
+                // Found a good match, stop rechecking
+                DispatchQueue.main.async {
+                    self.stopWorkoutRecheckTimer()
+                }
+            }
+        }
+    }
+
+    /// Gets HealthKit distance - from workout builder (standalone) or accumulated samples (companion)
+    private func getHealthKitDistance() -> Double? {
+        // First try workout builder (standalone mode)
+        if let builder = workoutBuilder {
+            let distanceType = HKQuantityType(.distanceWalkingRunning)
+            if let statistics = builder.statistics(for: distanceType),
+               let sum = statistics.sumQuantity() {
+                return sum.doubleValue(for: .meter())
+            }
+        }
+
+        // Fall back to accumulated samples from query (companion mode)
+        healthKitDistanceLock.lock()
+        let distance = healthKitAccumulatedDistance
+        healthKitDistanceLock.unlock()
+
+        // Return nil if no distance accumulated yet
+        return distance > 0 ? distance : nil
+    }
+
     private func handleLocationUpdate() {
         // Get data outside lock to avoid deadlock
-        // Apply pace calibration factor to GPS distance
-        let rawDistance = gpsManager.totalDistance
-        let calibrationFactor = settingsProvider().distanceCalibrationFactor()
-        let distance = rawDistance * calibrationFactor
+        let settings = settingsProvider()
         let timestamp = Date()
+
+        // Choose distance source based on settings
+        let rawDistance: Double
+        let distanceSource: String
+
+        if useHealthKitDistance, let hkDistance = getHealthKitDistance() {
+            // Use HealthKit distance (matches Apple Workout app)
+            rawDistance = hkDistance
+            distanceSource = "HealthKit"
+        } else {
+            // Use GPS distance with our own calculation
+            rawDistance = gpsManager.totalDistance
+            distanceSource = "GPS"
+        }
+
+        // Apply pace calibration factor
+        let calibrationFactor = settings.distanceCalibrationFactor()
+        let distance = rawDistance * calibrationFactor
+
+        // Debug logging for calibration (log every ~0.1 miles)
+        let rawMiles = rawDistance / 1609.34
+        if Int(rawMiles * 10) % 10 == 0 && Int(rawMiles * 10) > 0 {
+            let calibratedMiles = distance / 1609.34
+            print("WorkoutManager.calibration: source=\(distanceSource), paceCalibrationSeconds=\(settings.paceCalibrationSeconds), factor=\(calibrationFactor)")
+            print("WorkoutManager.calibration: rawMiles=\(String(format: "%.3f", rawMiles)), calibratedMiles=\(String(format: "%.3f", calibratedMiles))")
+        }
 
         // Add sample to pace calculator BEFORE acquiring lock
         // (addSample triggers pacePublisher which calls handlePaceUpdate)
@@ -306,8 +732,9 @@ class WorkoutManager: NSObject, WorkoutManagerProtocol {
             return
         }
 
-        // Update state
-        let elapsedTime = timestamp.timeIntervalSince(startTime ?? timestamp)
+        // Update state - subtract paused time from elapsed time
+        let rawElapsedTime = timestamp.timeIntervalSince(startTime ?? timestamp)
+        let elapsedTime = rawElapsedTime - totalPausedDuration
         state.distanceCovered = distance
         state.elapsedTime = elapsedTime
 
@@ -364,14 +791,17 @@ class WorkoutManager: NSObject, WorkoutManagerProtocol {
         // Grace period handling
         handleGracePeriod(state: &state, pace: pace)
 
-        // Update metronome volume and alerts based on pace deviation
-        if state.isInGracePeriod {
-            // During grace period - always silent, no alerts
-            audioEngine.setMetronomeVolume(0.0)
-        } else {
-            // Metronome always on at full volume (beatVolume from settings controls gain)
-            audioEngine.setMetronomeVolume(1.0)
+        // Metronome always on at full volume (beatVolume from settings controls gain)
+        // Beats play from workout start, voice alerts wait for grace period to end
+        audioEngine.setMetronomeVolume(1.0)
 
+        // Voice alerts only after:
+        // 1. Grace period ends
+        // 2. Medium pace average has filled up (enough data for reliable alerts)
+        let settings = settingsProvider()
+        let mediumAverageFilled = state.elapsedTime >= Double(settings.mediumAverageSeconds)
+
+        if !state.isInGracePeriod && mediumAverageFilled {
             // Generate voice alert based on cascading pace windows
             // Priority: split (urgent) > 3min (medium) > 1min (minor)
             if let message = cascadingVoiceAlert(
@@ -548,6 +978,15 @@ class WorkoutManager: NSObject, WorkoutManagerProtocol {
                 )
                 state.recordMileSplit(split)
 
+                // Log mile completion for debug
+                debugLog.logMile("Mile \(completedMile) complete", data: [
+                    "mileNumber": String(completedMile),
+                    "splitPace": pace.formatted,
+                    "targetPace": state.targetPace.formatted,
+                    "elapsedTime": String(format: "%.1f", state.elapsedTime),
+                    "totalDistance": String(format: "%.4f", distance / 1609.34)
+                ])
+
                 // Announce mile completion with pace if enabled (important - bypasses throttle)
                 let settings = settingsProvider()
                 if settings.announceMileMarkers {
@@ -557,6 +996,14 @@ class WorkoutManager: NSObject, WorkoutManagerProtocol {
             } else {
                 // Fallback: announce without pace if splitPace calculation failed
                 print("WorkoutManager: Warning - splitPace was nil at mile \(completedMile)")
+
+                // Log mile completion without pace
+                debugLog.logMile("Mile \(completedMile) complete (no pace)", data: [
+                    "mileNumber": String(completedMile),
+                    "elapsedTime": String(format: "%.1f", state.elapsedTime),
+                    "totalDistance": String(format: "%.4f", distance / 1609.34)
+                ])
+
                 let settings = settingsProvider()
                 if settings.announceMileMarkers {
                     audioEngine.playImportantAlert("Mile \(completedMile) complete")
@@ -578,8 +1025,30 @@ class WorkoutManager: NSObject, WorkoutManagerProtocol {
         workoutSession = nil
         workoutBuilder = nil
         startTime = nil
+        userTapTime = nil
         mileTracker.reset()
         hasAnnouncedCompletion = false
+        useHealthKitDistance = false
+        hasHealthKitStartTimeSync = false
+
+        // Reset pause tracking
+        totalPausedDuration = 0
+        pauseStartTime = nil
+
+        // Stop workout recheck timer
+        stopWorkoutRecheckTimer()
+        workoutRecheckCount = 0
+
+        // Stop HealthKit queries and reset accumulated distance
+        stopHealthKitDistanceQuery()
+        if let query = activeWorkoutQuery {
+            healthStore.stop(query)
+            activeWorkoutQuery = nil
+        }
+        healthKitDistanceLock.lock()
+        healthKitAccumulatedDistance = 0
+        distanceQueryAnchor = nil
+        healthKitDistanceLock.unlock()
 
         paceCalculator.reset()
         gpsManager.resetDistance()

@@ -168,6 +168,16 @@ struct SettingsView: View {
                     Text("Run alongside native Workout app")
                         .font(.caption)
                         .foregroundColor(.secondary)
+
+                    Toggle("Use HealthKit Distance", isOn: $settings.useHealthKitDistance)
+                        .onChange(of: settings.useHealthKitDistance) { _, _ in
+                            saveSettings()
+                        }
+                    Text(settings.companionMode
+                        ? "Query distance samples from Workout app"
+                        : "Match Apple Workout app distance (recommended)")
+                        .font(.caption)
+                        .foregroundColor(.secondary)
                 }
 
                 Section(header: Text("Pace Averaging")) {
@@ -231,9 +241,25 @@ struct SettingsView: View {
                         saveSettings()
                     }
                 }
+
+                Section(header: Text("About")) {
+                    HStack {
+                        Text("Version")
+                        Spacer()
+                        Text(appVersion)
+                            .foregroundColor(.secondary)
+                    }
+                }
             }
             .navigationTitle("Settings")
         }
+    }
+
+    /// App version and build number
+    private var appVersion: String {
+        let version = Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "?"
+        let build = Bundle.main.infoDictionary?["CFBundleVersion"] as? String ?? "?"
+        return "\(version) (\(build))"
     }
 
     private func saveSettings() {

@@ -19,6 +19,7 @@ struct ConfigurationListView: View {
     @ObservedObject var store: ConfigurationStore
     @State private var showingNewConfiguration = false
     @State private var configurationToEdit: RunConfiguration?
+    @State private var isEditMode = false
 
     var body: some View {
         NavigationStack {
@@ -30,6 +31,7 @@ struct ConfigurationListView: View {
                 }
             }
             .navigationTitle("Run Configurations")
+            .environment(\.editMode, isEditMode ? .constant(.active) : .constant(.inactive))
             .toolbar {
                 ToolbarItem(placement: .topBarLeading) {
                     HStack(spacing: 12) {
@@ -42,10 +44,25 @@ struct ConfigurationListView: View {
                     }
                 }
                 ToolbarItem(placement: .topBarTrailing) {
-                    Button {
-                        showingNewConfiguration = true
+                    Menu {
+                        Button {
+                            showingNewConfiguration = true
+                        } label: {
+                            Label("Add New", systemImage: "plus")
+                        }
+
+                        Button {
+                            isEditMode.toggle()
+                        } label: {
+                            if isEditMode {
+                                Label("Done Editing", systemImage: "checkmark")
+                            } else {
+                                Label("Reorder & Delete", systemImage: "arrow.up.arrow.down")
+                            }
+                        }
                     } label: {
-                        Label("New Configuration", systemImage: "plus")
+                        Image(systemName: "line.3.horizontal")
+                            .font(.title3)
                     }
                 }
             }
@@ -109,6 +126,14 @@ struct ConfigurationListView: View {
                         }
                         .tint(.orange)
                     }
+            }
+            .onMove { source, destination in
+                store.moveConfigurations(from: source, to: destination)
+            }
+            .onDelete { indexSet in
+                for index in indexSet {
+                    store.deleteConfiguration(store.configurations[index])
+                }
             }
         }
     }

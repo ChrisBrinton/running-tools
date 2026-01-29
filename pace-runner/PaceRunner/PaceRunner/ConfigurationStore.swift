@@ -1,5 +1,6 @@
 import Foundation
 import Combine
+import SwiftUI
 import PaceRunnerShared
 
 /// ObservableObject for managing run configurations
@@ -110,6 +111,13 @@ class ConfigurationStore: ObservableObject {
             autoEndRun: configuration.autoEndRun
         )
         createConfiguration(duplicate)
+    }
+
+    /// Moves configurations from one position to another
+    func moveConfigurations(from source: IndexSet, to destination: Int) {
+        configurations.move(fromOffsets: source, toOffset: destination)
+        saveConfigurations()
+        syncAllConfigurations()
     }
 
     // MARK: - Private Methods

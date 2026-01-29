@@ -326,7 +326,13 @@ extension SyncManager: WCSessionDelegate {
     public func sessionReachabilityDidChange(_ session: WCSession) {
         // Reachability changed - sync status may update
         if session.isReachable {
+            print("\(loggerPrefix) sessionReachabilityDidChange: now reachable")
             syncStatusSubject.send(.activated)
+
+            // Post notification for WatchWorkoutStore to retry pending syncs
+            NotificationCenter.default.post(name: .watchConnectivityReachable, object: nil)
+        } else {
+            print("\(loggerPrefix) sessionReachabilityDidChange: not reachable")
         }
     }
 
@@ -580,25 +586,57 @@ extension SyncManager: WCSessionDelegate {
     }
 
     private func saveWorkoutSummary(_ summary: WorkoutSummary) {
-        var summaries = loadWorkoutSummaries()
-        summaries.append(summary)
+        let (summaries, loadSuccess) = loadWorkoutSummariesWithStatus()
+
+        // If we failed to load existing summaries, don't overwrite - just save this one separately
+        // This prevents data loss when there's a decode issue
+        if !loadSuccess {
+            print("\(loggerPrefix) saveWorkoutSummary: load failed, saving to backup key to prevent data loss")
+            encoder.dateEncodingStrategy = .iso8601
+            if let data = try? encoder.encode([summary]) {
+                // Save to a separate key so we don't lose the corrupted data
+                UserDefaults.standard.set(data, forKey: "workoutSummaries_pending")
+            }
+            return
+        }
+
+        var updatedSummaries = summaries
+
+        // Check for duplicate by ID
+        if !updatedSummaries.contains(where: { $0.id == summary.id }) {
+            updatedSummaries.append(summary)
+        }
 
         encoder.dateEncodingStrategy = .iso8601
-        if let data = try? encoder.encode(summaries) {
+        if let data = try? encoder.encode(updatedSummaries) {
             UserDefaults.standard.set(data, forKey: "workoutSummaries")
+            print("\(loggerPrefix) saveWorkoutSummary: saved \(updatedSummaries.count) summaries")
+        }
+    }
+
+    /// Returns (summaries, loadSuccess) tuple
+    /// loadSuccess is false if there was existing data that failed to decode
+    private func loadWorkoutSummariesWithStatus() -> ([WorkoutSummary], Bool) {
+        guard let data = UserDefaults.standard.data(forKey: "workoutSummaries") else {
+            print("\(loggerPrefix) loadWorkoutSummaries: no data in UserDefaults")
+            return ([], true)  // No data is OK, not a failure
+        }
+
+        decoder.dateDecodingStrategy = .iso8601
+        do {
+            let summaries = try decoder.decode([WorkoutSummary].self, from: data)
+            print("\(loggerPrefix) loadWorkoutSummaries: loaded \(summaries.count) summaries")
+            return (summaries, true)
+        } catch {
+            // Log the error - this is a real problem
+            print("\(loggerPrefix) loadWorkoutSummaries: decode failed - \(error)")
+            print("\(loggerPrefix) loadWorkoutSummaries: data size was \(data.count) bytes")
+            return ([], false)  // Return false to indicate decode failure
         }
     }
 
     private func loadWorkoutSummaries() -> [WorkoutSummary] {
-        guard let data = UserDefaults.standard.data(forKey: "workoutSummaries") else {
-            return []
-        }
-
-        decoder.dateDecodingStrategy = .iso8601
-        guard let summaries = try? decoder.decode([WorkoutSummary].self, from: data) else {
-            return []
-        }
-        return summaries
+        return loadWorkoutSummariesWithStatus().0
     }
 }
 
@@ -610,4 +648,5 @@ extension Notification.Name {
     public static let configurationsReplacedAll = Notification.Name("configurationsReplacedAll")
     public static let settingsSynced = Notification.Name("settingsSynced")
     public static let workoutSummarySynced = Notification.Name("workoutSummarySynced")
+    public static let watchConnectivityReachable = Notification.Name("watchConnectivityReachable")
 }

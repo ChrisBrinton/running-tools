@@ -51,6 +51,10 @@ public struct WorkoutSummary: Codable, Identifiable {
     /// Example: Marathon has 27 splits (26 full miles + 0.2 final)
     public let mileSplits: [MileSplit]
 
+    /// Debug log capturing timing, sync, and calibration events
+    /// Used for troubleshooting timing discrepancies between PaceRunner and Workout app
+    public let debugLog: DebugLog?
+
     // MARK: - Initialization
 
     /// Creates a new WorkoutSummary
@@ -62,6 +66,7 @@ public struct WorkoutSummary: Codable, Identifiable {
     ///   - totalDistance: Total distance covered
     ///   - averagePace: Average pace for workout
     ///   - mileSplits: Per-mile performance data
+    ///   - debugLog: Optional debug log for troubleshooting
     /// - Precondition: End time must be after start time
     /// - Precondition: Configuration name must not be empty
     public init(
@@ -71,7 +76,8 @@ public struct WorkoutSummary: Codable, Identifiable {
         endTime: Date,
         totalDistance: Distance,
         averagePace: Pace,
-        mileSplits: [MileSplit]
+        mileSplits: [MileSplit],
+        debugLog: DebugLog? = nil
     ) {
         precondition(!configurationName.isEmpty,
                      "Configuration name must not be empty")
@@ -85,6 +91,7 @@ public struct WorkoutSummary: Codable, Identifiable {
         self.totalDistance = totalDistance
         self.averagePace = averagePace
         self.mileSplits = mileSplits
+        self.debugLog = debugLog
     }
 
     // MARK: - Computed Properties

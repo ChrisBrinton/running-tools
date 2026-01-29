@@ -229,8 +229,9 @@ public struct WorkoutState: Equatable {
     }
 
     /// Converts current state to WorkoutSummary
+    /// - Parameter debugLog: Optional debug log to include with the summary
     /// - Returns: Immutable summary of completed workout
-    public func toSummary() -> WorkoutSummary {
+    public func toSummary(debugLog: DebugLog? = nil) -> WorkoutSummary {
         let endTime = Date()
         let totalDistance = Distance(miles: milesCompleted)
 
@@ -252,7 +253,8 @@ public struct WorkoutState: Equatable {
             endTime: endTime,
             totalDistance: totalDistance,
             averagePace: avgPace,
-            mileSplits: mileSplits
+            mileSplits: mileSplits,
+            debugLog: debugLog
         )
     }
 }
