@@ -2,6 +2,8 @@ import { Hono } from "hono";
 import type { Store } from "../db.js";
 import { writeRouteGPX } from "../storage.js";
 import { decorateWorkoutWeather } from "../weather.js";
+import { computeSummary } from "../summary.js";
+import { computeMileSplits } from "../splits.js";
 
 interface WorkoutPayload {
   id: string;
@@ -46,6 +48,16 @@ export function mountWorkoutIngest(app: Hono, store: Store) {
     const rawMetaJSON = payload.raw_metadata ? JSON.stringify(payload.raw_metadata) : null;
     const isIndoor = detectIndoor(payload.raw_metadata);
 
+    // P1 — compute summary stats from samples + metadata. Cheap; one pass
+    // over each sample array. Stored on the workout row so list_workouts
+    // can return cross-workout trend data without paginating samples.
+    const summary = computeSummary({
+      samples: payload.samples,
+      rawMetadata: payload.raw_metadata,
+      totalDistanceMeters: payload.total_distance_meters,
+      durationSeconds: payload.duration_seconds,
+    });
+
     store.upsertWorkout({
       id: payload.id,
       user_id: auth.user.id,
@@ -66,6 +78,7 @@ export function mountWorkoutIngest(app: Hono, store: Store) {
       pacerunner_log_path: null,
       pacerunner_workout_id: null,
       ingested_by_device: payload.device ?? null,
+      summary_json: JSON.stringify(summary),
     });
 
     if (payload.samples) {
@@ -97,6 +110,44 @@ export function mountWorkoutIngest(app: Hono, store: Store) {
       );
     }
 
+    // P2 — compute per-mile splits from the route + samples. Synchronous
+    // (cheap; a 6 mile run is ~3700 points and produces 6-7 split rows).
+    // Only outdoor runs with a route GPX produce meaningful splits.
+    let splitCount = 0;
+    if (!isIndoor && payload.route_gpx && payload.route_gpx.length > 0) {
+      try {
+        const splits = computeMileSplits({
+          gpx: payload.route_gpx,
+          samples: payload.samples,
+        });
+        if (splits.length > 0) {
+          store.replaceSplits(
+            payload.id,
+            splits.map((s) => ({
+              workout_id: payload.id,
+              split_number: s.split_number,
+              unit: s.unit,
+              cumulative_distance_meters: s.cumulative_distance_meters,
+              distance_meters: s.distance_meters,
+              start_time: s.start_time,
+              end_time: s.end_time,
+              duration_seconds: s.duration_seconds,
+              pace_seconds_per_mile: s.pace_seconds_per_mile,
+              avg_heart_rate_bpm: s.avg_heart_rate_bpm,
+              avg_running_power_watts: s.avg_running_power_watts,
+              elevation_gain_meters: s.elevation_gain_meters,
+              elevation_loss_meters: s.elevation_loss_meters,
+            }))
+          );
+          splitCount = splits.length;
+        }
+      } catch (e) {
+        // Splits are a derived view, not source-of-truth — never fail the
+        // ingest because of a parse glitch in the GPX.
+        console.warn(`[splits] ${payload.id}: ${e instanceof Error ? e.message : e}`);
+      }
+    }
+
     // Kick off weather decoration in the background. Response goes out
     // immediately; the row gets a weather child later. Errors are caught
     // and logged inside decorateWorkoutWeather — they never escape here.
@@ -120,6 +171,7 @@ export function mountWorkoutIngest(app: Hono, store: Store) {
         ? Object.values(payload.samples).reduce((acc, arr) => acc + arr.length, 0)
         : 0,
       event_count: payload.events?.length ?? 0,
+      split_count: splitCount,
       is_indoor: isIndoor,
       weather_queued: !isIndoor && routeRelPath !== null,
     });

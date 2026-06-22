@@ -1,5 +1,6 @@
 import type { Store } from "../db.js";
 import { readRouteGPX, readPaceRunnerLog, fileSize } from "../storage.js";
+import { parseTrkpts } from "../splits.js";
 
 export interface ToolDescriptor {
   name: string;
@@ -11,9 +12,12 @@ export const TOOL_DESCRIPTORS: ToolDescriptor[] = [
   {
     name: "list_workouts",
     description:
-      "Lists ingested workouts for the authenticated user, newest first. Each entry has " +
-      "metadata plus `has_route`/`has_samples`/`has_events`/`has_pacerunner_log`/`has_weather` " +
-      "flags so the client knows which fields would return content on get_workout.",
+      "Lists ingested workouts for the authenticated user, newest first. Each entry " +
+      "includes a `summary` object (avg/min/max HR, pace, power, stride, cadence, " +
+      "elevation gain/loss) so cross-workout trend questions can be answered without " +
+      "paginating raw samples. The per-entry `has_*` flags advertise which fields " +
+      "would return content on get_workout: route_gpx, samples, events, pacerunner_log, " +
+      "weather, splits.",
     inputSchema: {
       type: "object",
       properties: {
@@ -28,7 +32,24 @@ export const TOOL_DESCRIPTORS: ToolDescriptor[] = [
     name: "get_workout",
     description:
       "Returns selected slices for a workout. `fields` is any subset of " +
-      "['metadata','route_gpx','samples','events','pacerunner_log','weather']. Default ['metadata'].",
+      "['metadata','route_gpx','samples','events','splits','pacerunner_log','weather']. " +
+      "Default ['metadata']. Notes:\n" +
+      "  • `metadata.summary` is always present when 'metadata' is requested.\n" +
+      "  • `samples` is keyed by HK quantity type (heartRate, runningPower, " +
+      "runningSpeed, runningStrideLength, runningGroundContactTime, " +
+      "runningVerticalOscillation, stepCount, activeEnergyBurned, basalEnergyBurned, " +
+      "vo2Max). Per-sample `altitude` (meters) is synthesized from the GPX trkpts " +
+      "and included whenever 'samples' is requested AND the workout has a route.\n" +
+      "  • `events` carries Apple Watch's internal workout-state markers. For " +
+      "standard Running workouts these are typically `segment` entries that " +
+      "represent Apple's internal workout subdivisions (NOT mile boundaries — " +
+      "use the `splits` field for that). Documented event `type` values: " +
+      "pause, resume, lap, marker, motionPaused, motionResumed, segment, " +
+      "pauseOrResumeRequest. Apple's documentation on `segment` semantics is " +
+      "thin; treat them as opaque and prefer `splits` for analysis.\n" +
+      "  • `splits` is per-mile, derived from the GPS trace via interpolation " +
+      "(not from Watch lap-button presses). Each split carries distance, " +
+      "duration, pace (sec/mi), mean HR, mean power, elevation gain/loss.",
     inputSchema: {
       type: "object",
       required: ["id"],
@@ -101,6 +122,7 @@ async function listWorkouts(
 
   const workouts = rows.map((r) => {
     const hasWeather = store.getWeather(r.id) !== undefined;
+    const hasSplits = store.getSplits(r.id).length > 0;
     return {
       id: r.id,
       activity_type: r.activity_type,
@@ -118,6 +140,8 @@ async function listWorkouts(
       has_events: r.has_events === 1,
       has_pacerunner_log: r.pacerunner_log_path !== null,
       has_weather: hasWeather,
+      has_splits: hasSplits,
+      summary: r.summary_json ? JSON.parse(r.summary_json) : null,
     };
   });
 
@@ -152,6 +176,7 @@ async function getWorkout(
       source_bundle_id: w.source_bundle_id,
       raw_metadata: w.raw_metadata ? JSON.parse(w.raw_metadata) : null,
       is_indoor: w.is_indoor === 1,
+      summary: w.summary_json ? JSON.parse(w.summary_json) : null,
       ingested_at: w.ingested_at,
       ingested_by_device: w.ingested_by_device,
     };
@@ -171,12 +196,52 @@ async function getWorkout(
         start: r.start_time, end: r.end_time, value: r.value, unit: r.unit,
       });
     }
+    // P3 — synthesize a per-sample `altitude` series from the GPX trkpts so
+    // the coach can correlate elevation with HR/power on the same time axis.
+    // The trkpts contain <ele> tags; we just expose them as a parallel series.
+    if (w.has_route === 1) {
+      const gpx = await readRouteGPX(store, userID, w.id);
+      if (gpx) {
+        const trkpts = parseTrkpts(gpx);
+        const altSamples = trkpts
+          .filter((p) => p.ele !== null)
+          .map((p) => ({
+            start: p.t.toISOString(),
+            end: p.t.toISOString(),
+            value: p.ele as number,
+            unit: "m",
+          }));
+        if (altSamples.length > 0) {
+          grouped.altitude = altSamples;
+        }
+      }
+    }
     out.samples = grouped;
   }
 
   if (fields.has("events")) {
     out.events = store.getEvents(w.id).map((r) => ({
       type: r.type, start: r.start_time, duration_seconds: r.duration_seconds,
+    }));
+  }
+
+  if (fields.has("splits")) {
+    const splits = store.getSplits(w.id);
+    out.splits = splits.map((s) => ({
+      split_number: s.split_number,
+      unit: s.unit,
+      cumulative_distance_meters: s.cumulative_distance_meters,
+      cumulative_distance_miles: s.cumulative_distance_meters / 1609.344,
+      distance_meters: s.distance_meters,
+      distance_miles: s.distance_meters / 1609.344,
+      start_time: s.start_time,
+      end_time: s.end_time,
+      duration_seconds: s.duration_seconds,
+      pace_seconds_per_mile: s.pace_seconds_per_mile,
+      avg_heart_rate_bpm: s.avg_heart_rate_bpm,
+      avg_running_power_watts: s.avg_running_power_watts,
+      elevation_gain_meters: s.elevation_gain_meters,
+      elevation_loss_meters: s.elevation_loss_meters,
     }));
   }
 

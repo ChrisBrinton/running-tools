@@ -81,6 +81,26 @@ export interface WorkoutRow {
   pacerunner_workout_id: string | null;
   ingested_at: string;
   ingested_by_device: string | null;
+  /** JSON-encoded WorkoutSummary blob (avg/min/max HR, pace, power, etc.).
+   *  Computed at ingest from samples + raw metadata; null on workouts that
+   *  were ingested before the summary feature shipped. */
+  summary_json: string | null;
+}
+
+export interface WorkoutSplitRow {
+  workout_id: string;
+  split_number: number;
+  unit: string;
+  cumulative_distance_meters: number;
+  distance_meters: number;
+  start_time: string;
+  end_time: string;
+  duration_seconds: number;
+  pace_seconds_per_mile: number | null;
+  avg_heart_rate_bpm: number | null;
+  avg_running_power_watts: number | null;
+  elevation_gain_meters: number;
+  elevation_loss_meters: number;
 }
 
 export interface QuantitySampleRow {
@@ -265,7 +285,36 @@ export class Store {
         expires_at TEXT NOT NULL,
         used INTEGER NOT NULL DEFAULT 0
       );
+
+      CREATE TABLE IF NOT EXISTS workout_splits (
+        workout_id TEXT NOT NULL,
+        split_number INTEGER NOT NULL,
+        unit TEXT NOT NULL,
+        cumulative_distance_meters REAL NOT NULL,
+        distance_meters REAL NOT NULL,
+        start_time TEXT NOT NULL,
+        end_time TEXT NOT NULL,
+        duration_seconds REAL NOT NULL,
+        pace_seconds_per_mile REAL,
+        avg_heart_rate_bpm REAL,
+        avg_running_power_watts REAL,
+        elevation_gain_meters REAL NOT NULL DEFAULT 0,
+        elevation_loss_meters REAL NOT NULL DEFAULT 0,
+        PRIMARY KEY (workout_id, unit, split_number),
+        FOREIGN KEY (workout_id) REFERENCES workouts(id) ON DELETE CASCADE
+      );
+      CREATE INDEX IF NOT EXISTS idx_splits_workout ON workout_splits(workout_id);
     `);
+
+    // Additive column migrations — safe to re-run; ALTER TABLE ADD COLUMN
+    // is idempotent if we guard on PRAGMA table_info.
+    this.addColumnIfMissing("workouts", "summary_json", "TEXT");
+  }
+
+  private addColumnIfMissing(table: string, column: string, type: string): void {
+    const cols = this.db.prepare(`PRAGMA table_info(${table})`).all() as Array<{ name: string }>;
+    if (cols.some((c) => c.name === column)) return;
+    this.db.exec(`ALTER TABLE ${table} ADD COLUMN ${column} ${type}`);
   }
 
   // ---------------------------------------------------------------------
@@ -412,14 +461,14 @@ export class Store {
         source_name, source_bundle_id, raw_metadata,
         has_route, has_samples, has_events, is_indoor,
         pacerunner_log_path, pacerunner_workout_id,
-        ingested_at, ingested_by_device
+        ingested_at, ingested_by_device, summary_json
       ) VALUES (
         @id, @user_id, @activity_type, @activity_type_raw, @start_time, @end_time,
         @duration_seconds, @total_distance_meters, @total_energy_kcal,
         @source_name, @source_bundle_id, @raw_metadata,
         @has_route, @has_samples, @has_events, @is_indoor,
         @pacerunner_log_path, @pacerunner_workout_id,
-        @ingested_at, @ingested_by_device
+        @ingested_at, @ingested_by_device, @summary_json
       )
       ON CONFLICT(id) DO UPDATE SET
         activity_type = excluded.activity_type,
@@ -439,9 +488,44 @@ export class Store {
         pacerunner_log_path = COALESCE(excluded.pacerunner_log_path, workouts.pacerunner_log_path),
         pacerunner_workout_id = COALESCE(excluded.pacerunner_workout_id, workouts.pacerunner_workout_id),
         ingested_at = excluded.ingested_at,
-        ingested_by_device = excluded.ingested_by_device
+        ingested_by_device = excluded.ingested_by_device,
+        summary_json = COALESCE(excluded.summary_json, workouts.summary_json)
       WHERE workouts.user_id = excluded.user_id
     `).run({ ...row, ingested_at: ingestedAt });
+  }
+
+  // ---------------------------------------------------------------------
+  // Splits
+  // ---------------------------------------------------------------------
+
+  /** Replace all splits for a workout atomically. Idempotent re-ingest. */
+  replaceSplits(workoutID: string, rows: WorkoutSplitRow[]): void {
+    const txn = this.db.transaction((rs: WorkoutSplitRow[]) => {
+      this.db.prepare("DELETE FROM workout_splits WHERE workout_id = ?").run(workoutID);
+      const ins = this.db.prepare(`
+        INSERT INTO workout_splits (
+          workout_id, split_number, unit,
+          cumulative_distance_meters, distance_meters,
+          start_time, end_time, duration_seconds,
+          pace_seconds_per_mile, avg_heart_rate_bpm, avg_running_power_watts,
+          elevation_gain_meters, elevation_loss_meters
+        ) VALUES (
+          @workout_id, @split_number, @unit,
+          @cumulative_distance_meters, @distance_meters,
+          @start_time, @end_time, @duration_seconds,
+          @pace_seconds_per_mile, @avg_heart_rate_bpm, @avg_running_power_watts,
+          @elevation_gain_meters, @elevation_loss_meters
+        )
+      `);
+      for (const r of rs) ins.run(r);
+    });
+    txn(rows);
+  }
+
+  getSplits(workoutID: string, unit: string = "mile"): WorkoutSplitRow[] {
+    return this.db.prepare(
+      "SELECT * FROM workout_splits WHERE workout_id = ? AND unit = ? ORDER BY split_number"
+    ).all(workoutID, unit) as WorkoutSplitRow[];
   }
 
   listWorkouts(userID: number, opts: {
