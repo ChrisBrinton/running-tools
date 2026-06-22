@@ -7,7 +7,7 @@
 # `:443` and stick a `tls internal` directive in to use a self-signed cert
 # for local testing.
 
-running.brintontech.com {
+pacerunner.brintontech.com {
 	encode zstd gzip
 
 	# Optional: drop any traffic that isn't the iPhone or a known coach IP

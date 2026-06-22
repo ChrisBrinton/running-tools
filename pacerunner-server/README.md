@@ -101,7 +101,7 @@ curl -X POST http://localhost:8080/mcp \
 
 ## Production (Mac mini)
 
-1. DNS A record for `running.brintontech.com` pointed at your public IP.
+1. DNS A record for `pacerunner.brintontech.com` pointed at your public IP.
 2. Ports 80 + 443 forwarded → mini.
 3. Docker installed.
 
@@ -114,13 +114,13 @@ docker compose exec pacerunner-server node dist/admin.js create-token --user-id 
 ```
 
 Caddy auto-provisions Let's Encrypt on first HTTPS request. Edit `Caddyfile`
-to match your domain if it isn't `running.brintontech.com`.
+to match your domain if it isn't `pacerunner.brintontech.com`.
 
 ### Smoke test
 
 ```bash
-curl https://running.brintontech.com/health
-curl -X POST https://running.brintontech.com/mcp \
+curl https://pacerunner.brintontech.com/health
+curl -X POST https://pacerunner.brintontech.com/mcp \
   -H "Authorization: Bearer $MCP_TOKEN" \
   -H "Content-Type: application/json" \
   -d '{"jsonrpc":"2.0","id":1,"method":"tools/list"}'
