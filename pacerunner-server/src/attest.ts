@@ -173,8 +173,11 @@ export function verifyAttestation(
 
   // -------- Step 8: extract public key from leaf cert (SPKI DER) -------
   // The leaf cert's subjectPublicKeyInfo IS the key Apple is attesting.
-  const pubKey = createPublicKey(leaf.publicKey);
-  const publicKeyDer = pubKey.export({ type: "spki", format: "der" });
+  // leaf.publicKey is already a public KeyObject; we just need to export
+  // it as SPKI DER. (Earlier code wrapped it through createPublicKey()
+  // which throws on already-public KeyObjects — Node's API quirk: that
+  // entry point only accepts private KeyObjects.)
+  const publicKeyDer = leaf.publicKey.export({ type: "spki", format: "der" }) as Buffer;
 
   return {
     keyId,
