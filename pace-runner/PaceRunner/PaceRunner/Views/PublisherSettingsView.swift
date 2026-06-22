@@ -19,6 +19,12 @@ struct PublisherSettingsView: View {
     @State private var showingResetConfirm = false
     @State private var backfillDays: Int = 90
     @State private var lastBackfillSummary: String?
+
+    // Coach token UI state.
+    @State private var coachTokenLabel: String = "Claude Code"
+    @State private var generatedCoachToken: String?
+    @State private var isGeneratingToken = false
+    @State private var coachTokenError: String?
     @State private var showingAdvanced = false
 
     var body: some View {
@@ -70,6 +76,8 @@ struct PublisherSettingsView: View {
                         .foregroundStyle(.secondary)
                 }
             }
+
+            coachAccessSection
 
             Section {
                 Button(role: .destructive) {
@@ -180,6 +188,133 @@ struct PublisherSettingsView: View {
             return publisher.ingestToken.isEmpty
                 ? "Not registered"
                 : "Token present (legacy / manual)"
+        }
+    }
+
+    // MARK: - Coach access
+
+    /// Section that mints + displays an MCP-scoped token for an AI chat
+    /// session. Visible only when the device is registered (we need a
+    /// valid ingest token to call /ingest/tokens).
+    @ViewBuilder
+    private var coachAccessSection: some View {
+        if publisher.isConfigured && registration.state == .registered {
+            Section {
+                Text("Generate a token for an AI chat session (Claude Code, running coach, etc.) to read your workout data over MCP. The token is shown once — copy or share it immediately.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+
+                TextField("Label (e.g. 'running coach')", text: $coachTokenLabel)
+                    .disableAutocorrection(true)
+                    .autocapitalization(.words)
+
+                Button {
+                    Task { await generateCoachToken() }
+                } label: {
+                    HStack {
+                        if isGeneratingToken {
+                            ProgressView()
+                            Text("Generating…")
+                        } else {
+                            Label("Generate coach token", systemImage: "key.horizontal.fill")
+                        }
+                    }
+                }
+                .disabled(isGeneratingToken || coachTokenLabel.trimmingCharacters(in: .whitespaces).isEmpty)
+
+                if let err = coachTokenError {
+                    Text(err)
+                        .font(.caption)
+                        .foregroundStyle(.red)
+                }
+
+                if let token = generatedCoachToken {
+                    coachTokenDisplay(token)
+                }
+            } header: {
+                Text("Coach access")
+            } footer: {
+                Text("Tokens only grant read access (cannot push or modify data). Tokens you no longer need can be revoked via the admin CLI on the server.")
+            }
+        }
+    }
+
+    /// Token-just-issued display: token in monospace + Copy + Share + Dismiss.
+    @ViewBuilder
+    private func coachTokenDisplay(_ token: String) -> some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Label("New token (save it now)", systemImage: "exclamationmark.shield.fill")
+                .foregroundStyle(.orange)
+                .font(.caption.weight(.semibold))
+
+            Text(token)
+                .font(.system(.caption, design: .monospaced))
+                .textSelection(.enabled)
+                .padding(8)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .background(Color.secondary.opacity(0.12), in: RoundedRectangle(cornerRadius: 6))
+
+            HStack(spacing: 12) {
+                Button {
+                    UIPasteboard.general.string = token
+                } label: {
+                    Label("Copy", systemImage: "doc.on.doc")
+                }
+                .buttonStyle(.bordered)
+
+                ShareLink(item: clientConfigSnippet(token: token)) {
+                    Label("Share…", systemImage: "square.and.arrow.up")
+                }
+                .buttonStyle(.bordered)
+
+                Spacer()
+
+                Button("Dismiss") {
+                    generatedCoachToken = nil
+                }
+                .buttonStyle(.borderless)
+            }
+
+            // Always-visible ready-to-paste config block so the user can
+            // see what they're sharing before they tap Share.
+            Text("MCP client config:")
+                .font(.caption.weight(.semibold))
+                .padding(.top, 4)
+            Text(clientConfigSnippet(token: token))
+                .font(.system(.caption2, design: .monospaced))
+                .textSelection(.enabled)
+                .padding(8)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .background(Color.secondary.opacity(0.08), in: RoundedRectangle(cornerRadius: 6))
+        }
+    }
+
+    private func clientConfigSnippet(token: String) -> String {
+        let url = publisher.serverURL.trimmingCharacters(in: .whitespaces)
+        let mcpURL = url.hasSuffix("/") ? "\(url)mcp" : "\(url)/mcp"
+        return """
+        {
+          "mcpServers": {
+            "pacerunner": {
+              "type": "http",
+              "url": "\(mcpURL)",
+              "headers": { "Authorization": "Bearer \(token)" }
+            }
+          }
+        }
+        """
+    }
+
+    private func generateCoachToken() async {
+        coachTokenError = nil
+        isGeneratingToken = true
+        defer { isGeneratingToken = false }
+        do {
+            let label = coachTokenLabel.trimmingCharacters(in: .whitespaces)
+            let token = try await publisher.createMCPToken(label: label)
+            generatedCoachToken = token
+        } catch {
+            coachTokenError = error.localizedDescription
         }
     }
 

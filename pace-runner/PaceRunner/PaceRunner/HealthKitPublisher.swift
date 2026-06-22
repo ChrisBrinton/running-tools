@@ -268,6 +268,45 @@ final class HealthKitPublisher: ObservableObject {
         recomputeStatus()
     }
 
+    // MARK: - Token management
+
+    /// Calls `POST /ingest/tokens` to mint a new MCP-scoped token for THIS
+    /// user (the one our ingest token is bound to). The server's policy
+    /// allows ingest scope to create mcp scope laterally — same blast
+    /// radius — so we don't need an admin handshake.
+    ///
+    /// Returns the freshly-minted token string. The caller is responsible
+    /// for displaying it; we don't persist it on the phone (the server
+    /// won't echo it again on subsequent reads).
+    func createMCPToken(label: String) async throws -> String {
+        guard isConfigured else { throw PushError.notConfigured }
+        guard let base = URL(string: serverURL),
+              let url = URL(string: "/ingest/tokens", relativeTo: base) else {
+            throw PushError.notConfigured
+        }
+        let body: [String: Any] = ["scope": "mcp", "label": label]
+        var req = URLRequest(url: url)
+        req.httpMethod = "POST"
+        req.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        req.setValue("Bearer \(ingestToken)", forHTTPHeaderField: "Authorization")
+        req.timeoutInterval = 30
+        req.httpBody = try JSONSerialization.data(withJSONObject: body)
+
+        let (data, resp) = try await URLSession.shared.data(for: req)
+        guard let http = resp as? HTTPURLResponse else {
+            throw PushError.http(0, "non-HTTP response")
+        }
+        if http.statusCode == 401 || http.statusCode == 403 {
+            throw PushError.unauthorized
+        }
+        if !(200...299).contains(http.statusCode) {
+            throw PushError.http(http.statusCode, String(data: data, encoding: .utf8) ?? "")
+        }
+        struct Response: Decodable { let token: String }
+        let decoded = try JSONDecoder().decode(Response.self, from: data)
+        return decoded.token
+    }
+
     // MARK: - Push primitives
 
     private enum PushError: LocalizedError {
