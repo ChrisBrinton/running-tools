@@ -309,8 +309,16 @@ function parseAuthData(authData: Buffer): ParsedAuthData {
  */
 function extractNonceExtension(cert: X509Certificate): Buffer | null {
   const der = cert.raw;
-  // OID 1.2.840.113635.100.8.2 in DER: 06 0a 2a 86 48 86 f7 63 64 08 02
-  const oidPattern = Buffer.from([0x06, 0x0a, 0x2a, 0x86, 0x48, 0x86, 0xf7, 0x63, 0x64, 0x08, 0x02]);
+  // OID 1.2.840.113635.100.8.2 in DER:
+  //   0x06       OBJECT IDENTIFIER tag
+  //   0x09       length = 9 bytes (NOT 10 — previous bug here)
+  //   0x2A       40*1 + 2  (arcs 1.2)
+  //   0x86 0x48  arc 840
+  //   0x86 0xF7 0x63  arc 113635
+  //   0x64       arc 100
+  //   0x08       arc 8
+  //   0x02       arc 2
+  const oidPattern = Buffer.from([0x06, 0x09, 0x2a, 0x86, 0x48, 0x86, 0xf7, 0x63, 0x64, 0x08, 0x02]);
   const oidIdx = der.indexOf(oidPattern);
   if (oidIdx < 0) return null;
 
