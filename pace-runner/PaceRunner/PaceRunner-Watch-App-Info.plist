@@ -7,5 +7,7 @@
 		<string>audio</string>
 		<string>location</string>
 	</array>
+	<key>NSMotionUsageDescription</key>
+	<string>PaceRunner reads barometric altitude during workouts to log elevation changes for run diagnostics.</string>
 </dict>
 </plist>

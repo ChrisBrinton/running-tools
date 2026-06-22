@@ -60,10 +60,7 @@ final class PaceCalculatorTests: XCTestCase {
             calculator.addSample(distance: distance, timestamp: timestamp)
         }
 
-        guard let target = Pace(minutes: 8, seconds: 30) else {
-            XCTFail("Failed to create target pace")
-            return
-        }
+        let target = Pace(minutes: 8, seconds: 30)
 
         let status = calculator.paceStatus(targetPace: target, tolerance: 5)
         switch status {

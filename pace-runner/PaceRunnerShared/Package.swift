@@ -20,7 +20,8 @@ let package = Package(
         .target(
             name: "PaceRunnerShared",
             dependencies: [],
-            path: "Sources/PaceRunnerShared"
+            path: "Sources/PaceRunnerShared",
+            linkerSettings: [.linkedFramework("StoreKit")]
         ),
         .testTarget(
             name: "PaceRunnerSharedTests",

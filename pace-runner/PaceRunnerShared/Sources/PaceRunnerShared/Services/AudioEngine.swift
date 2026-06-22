@@ -60,7 +60,12 @@ public class AudioEngine: AudioEngineProtocol {
 
     // Pre-computed beat samples
     private var regularBeatSamples: [Float] = []
-    private var emphasisBeatSamples: [Float] = []
+    private var emphasisBeatSamples: [Float] = []      // Normal emphasis (on-pace)
+    private var emphasisUpbeatSamples: [Float] = []    // Higher pitch emphasis (speed up)
+    private var emphasisDownbeatSamples: [Float] = []  // Lower pitch emphasis (slow down)
+
+    /// Current emphasis beat mode: 0=normal, 1=upbeat (speed up), -1=downbeat (slow down)
+    private var emphasisBeatMode: Int = 0
 
     // Voice alert throttling
     private var lastAlertTime: Date?
@@ -121,6 +126,24 @@ public class AudioEngine: AudioEngineProtocol {
             frequency: emphasis.frequency,
             amplitude: emphasis.amplitude,
             decayRate: emphasis.decayRate
+        )
+
+        // Upbeat: two octaves above the regular beat (speed up signal)
+        emphasisUpbeatSamples = Self.generateBeatSamples(
+            sampleRate: activeSampleRate,
+            duration: regular.duration,
+            frequency: regular.frequency * 4.0,  // Two octaves up from regular
+            amplitude: regular.amplitude,
+            decayRate: regular.decayRate
+        )
+
+        // Downbeat: two octaves below the regular beat (slow down signal)
+        emphasisDownbeatSamples = Self.generateBeatSamples(
+            sampleRate: activeSampleRate,
+            duration: regular.duration,
+            frequency: regular.frequency * 0.25,  // Two octaves down from regular
+            amplitude: regular.amplitude,
+            decayRate: regular.decayRate
         )
 
         print("AudioEngine: regenerated beat samples, regular=\(regularBeatSamples.count), emphasis=\(emphasisBeatSamples.count)")
@@ -209,6 +232,9 @@ public class AudioEngine: AudioEngineProtocol {
         var counter = beatCounter
         let regularSamples = regularBeatSamples
         let emphasisSamples = emphasisBeatSamples
+        let upbeatSamples = emphasisUpbeatSamples
+        let downbeatSamples = emphasisDownbeatSamples
+        let beatMode = emphasisBeatMode
         var currentSampleTime = sampleTime
         stateLock.unlock()
 
@@ -224,7 +250,12 @@ public class AudioEngine: AudioEngineProtocol {
                     let isEmphasis = emphasisEnabled && (counter % emphasisInterval == 0)
 
                     if isEmphasis {
-                        beatSamples = emphasisSamples
+                        // Pick directional emphasis based on pace feedback mode
+                        switch beatMode {
+                        case 1:  beatSamples = upbeatSamples    // Too slow — speed up
+                        case -1: beatSamples = downbeatSamples  // Too fast — slow down
+                        default: beatSamples = emphasisSamples  // On pace — normal
+                        }
                         inBeat = true
                         beatPos = 0
                     } else if beatsEnabled {
@@ -276,16 +307,57 @@ public class AudioEngine: AudioEngineProtocol {
     // MARK: - Audio Session Configuration
 
     private func configureAudioSession() throws {
-        // Use simple playback category - works better on watchOS
+        #if os(watchOS)
+        // Use longFormAudio policy on watchOS to trigger Bluetooth headphone discovery
+        // This is what the Music app uses - it actively searches for and routes to
+        // connected Bluetooth audio devices instead of playing through the speaker
+        do {
+            try session.setCategory(.playback, mode: .default, policy: .longFormAudio, options: [.mixWithOthers])
+        } catch {
+            print("AudioEngine: Failed to set longFormAudio policy: \(error)")
+            // Fall back to simple playback
+            try session.setCategory(.playback, mode: .default, options: [.mixWithOthers])
+        }
+
+        // Use watchOS-specific async activation which handles Bluetooth route negotiation
+        // We use a semaphore to wait for activation before starting the audio engine,
+        // otherwise audio plays through the speaker before Bluetooth is connected
+        let semaphore = DispatchSemaphore(value: 0)
+        var activationError: Error?
+
+        session.activate(options: []) { activated, error in
+            if let error = error {
+                print("AudioEngine: watchOS session activation error: \(error)")
+                activationError = error
+            } else {
+                print("AudioEngine: watchOS session activated: \(activated)")
+                // Log the current audio route
+                let route = AVAudioSession.sharedInstance().currentRoute
+                let outputs = route.outputs.map { "\($0.portName) (\($0.portType.rawValue))" }.joined(separator: ", ")
+                print("AudioEngine: audio route after activation: \(outputs)")
+            }
+            semaphore.signal()
+        }
+
+        // Wait up to 8 seconds for Bluetooth route negotiation
+        let result = semaphore.wait(timeout: .now() + 8.0)
+        if result == .timedOut {
+            print("AudioEngine: watchOS session activation timed out (8s) — may play through speaker")
+        }
+        if let error = activationError {
+            print("AudioEngine: proceeding despite activation error: \(error)")
+        }
+        #else
+        // iOS: simple playback category
         do {
             try session.setCategory(.playback, mode: .default, options: [.mixWithOthers])
         } catch {
             print("AudioEngine: Failed to set audio category: \(error)")
-            // Try even simpler configuration
             try session.setCategory(.playback)
         }
 
         try session.setActive(true)
+        #endif
         print("AudioEngine: audio session configured")
     }
 
@@ -369,6 +441,31 @@ public class AudioEngine: AudioEngineProtocol {
         return samples
     }
 
+    /// Generates a two-tone sample: first half plays freq1, second half plays freq2
+    /// Used for ascending (up note) and descending (down note) directional feedback
+    public static func generateTwoToneSamples(
+        sampleRate: Double,
+        duration: Double,
+        freq1: Float,
+        freq2: Float,
+        amplitude: Float,
+        decayRate: Float
+    ) -> [Float] {
+        let totalFrames = Int(sampleRate * duration)
+        let halfFrames = totalFrames / 2
+        var samples = Array(repeating: Float.zero, count: totalFrames)
+
+        for frame in 0..<totalFrames {
+            let freq = frame < halfFrames ? freq1 : freq2
+            let localFrame = frame < halfFrames ? frame : frame - halfFrames
+            let phase = 2.0 * Float.pi * freq * Float(localFrame) / Float(sampleRate)
+            let envelope = envelopeValue(frame: frame, totalFrames: totalFrames, decayRate: decayRate)
+            samples[frame] = amplitude * sin(phase) * envelope
+        }
+
+        return samples
+    }
+
     private static func envelopeValue(frame: Int, totalFrames: Int, decayRate: Float) -> Float {
         // Bass drum envelope: quick attack, exponential decay, smooth fade-out
         let attackFrames = totalFrames / 20 // 5% attack
@@ -432,6 +529,24 @@ public class AudioEngine: AudioEngineProtocol {
         stateLock.lock()
         currentFrequencyRatio = newRatio
         regenerateBeatSamples()
+        stateLock.unlock()
+    }
+
+    /// Reset beat frequency to normal pitch (on-pace)
+    public func resetBeatFrequency() {
+        guard currentFrequencyRatio != 1.0 else { return }
+
+        stateLock.lock()
+        currentFrequencyRatio = 1.0
+        regenerateBeatSamples()
+        stateLock.unlock()
+    }
+
+    /// Set emphasis beat mode for pace direction feedback
+    /// - Parameter mode: 1 = upbeat (speed up), -1 = downbeat (slow down), 0 = normal
+    public func setEmphasisBeatMode(_ mode: Int) {
+        stateLock.lock()
+        emphasisBeatMode = mode
         stateLock.unlock()
     }
 

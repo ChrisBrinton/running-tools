@@ -1,0 +1,30 @@
+# Replace running.brintontech.com once your DNS A record is pointing to the
+# mini's public IP and ports 80/443 are forwarded from the router.
+#
+# Caddy will auto-provision a Let's Encrypt cert on first request — the
+# domain has to resolve to this server for the ACME HTTP-01 challenge to
+# succeed. Until the DNS is set up, you can swap the site address to
+# `:443` and stick a `tls internal` directive in to use a self-signed cert
+# for local testing.
+
+running.brintontech.com {
+	encode zstd gzip
+
+	# Optional: drop any traffic that isn't the iPhone or a known coach IP
+	# by uncommenting and customizing the @blocked matcher below.
+	# @blocked not remote_ip a.b.c.d/24
+	# respond @blocked 403
+
+	reverse_proxy pacerunner-server:8080 {
+		header_up Host {host}
+		header_up X-Real-IP {remote_host}
+	}
+
+	log {
+		output file /data/access.log {
+			roll_size 10mb
+			roll_keep 5
+		}
+		format json
+	}
+}

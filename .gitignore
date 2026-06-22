@@ -17,3 +17,8 @@ build/
 
 # Spec artifacts (local cache)
 /.specify/cache/
+
+# Personal Health / debug exports — never commit user data
+/export.zip
+/pacerunner-export*.zip
+/pacerunner-export*.txt

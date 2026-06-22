@@ -1,0 +1,17 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>UIBackgroundModes</key>
+	<array>
+		<string>audio</string>
+		<string>location</string>
+	</array>
+	<key>NSLocalNetworkUsageDescription</key>
+	<string>PaceRunner can host an MCP server so AI tools (like a running coach) on your other devices can read your workout data over the local network.</string>
+	<key>NSBonjourServices</key>
+	<array>
+		<string>_mcp._tcp</string>
+	</array>
+</dict>
+</plist>

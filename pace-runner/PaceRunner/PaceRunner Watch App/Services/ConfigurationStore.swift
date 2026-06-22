@@ -49,6 +49,15 @@ final class ConfigurationStore: ObservableObject {
                 }
             }
             .store(in: &cancellables)
+
+        NotificationCenter.default.publisher(for: .resetAllReceived)
+            .receive(on: DispatchQueue.main)
+            .sink { [weak self] _ in
+                self?.configurations = [Self.sampleConfiguration]
+                self?.selectedConfiguration = self?.configurations.first
+                self?.saveConfigurations()
+            }
+            .store(in: &cancellables)
     }
 
     func select(_ configuration: RunConfiguration) {
@@ -57,6 +66,19 @@ final class ConfigurationStore: ObservableObject {
 
     func clearSelection() {
         selectedConfiguration = nil
+    }
+
+    /// Creates a new configuration on the watch and syncs to iPhone
+    func createConfiguration(_ configuration: RunConfiguration) {
+        removeSampleIfNeeded()
+        configurations.append(configuration)
+        saveConfigurations()
+        syncManager.syncConfiguration(configuration)
+    }
+
+    /// Finds a configuration by name
+    func configuration(named name: String) -> RunConfiguration? {
+        configurations.first(where: { $0.name == name })
     }
 
     private func loadConfigurations() {

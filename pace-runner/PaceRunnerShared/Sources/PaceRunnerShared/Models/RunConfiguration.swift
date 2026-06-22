@@ -59,6 +59,20 @@ public struct RunConfiguration: Codable, Identifiable, Equatable {
     /// Default: true
     public var autoEndRun: Bool
 
+    /// Per-config stride length override in inches
+    /// nil = use global AppSettings.strideLengthInches
+    public var strideLengthInches: Double?
+
+    /// Per-config pace calibration override in seconds per mile
+    /// nil = use global AppSettings.paceCalibrationSeconds
+    /// Useful when GPS is the distance source and calibration varies by pace
+    public var paceCalibrationSeconds: Int?
+
+    /// Optional multi-segment definition (Pro feature)
+    /// nil = single-segment config (backward compatible)
+    /// When set, `distance` and `milePaces` are derived from segments
+    public var segments: [RunSegment]?
+
     /// Timestamp when configuration was created
     public let createdAt: Date
 
@@ -90,7 +104,9 @@ public struct RunConfiguration: Codable, Identifiable, Equatable {
         paceTolerance: Int = 10,
         metronomeMinVolume: Float = 1.0,
         metronomeMaxVolume: Float = 1.0,
-        autoEndRun: Bool = true
+        autoEndRun: Bool = true,
+        strideLengthInches: Double? = nil,
+        paceCalibrationSeconds: Int? = nil
     ) {
         precondition(!name.isEmpty, "Configuration name must not be empty")
         precondition(-15...15 ~= cadenceOffset,
@@ -107,6 +123,9 @@ public struct RunConfiguration: Codable, Identifiable, Equatable {
         self.metronomeMinVolume = metronomeMinVolume
         self.metronomeMaxVolume = metronomeMaxVolume
         self.autoEndRun = autoEndRun
+        self.strideLengthInches = strideLengthInches
+        self.paceCalibrationSeconds = paceCalibrationSeconds
+        self.segments = nil
         self.createdAt = now
         self.modifiedAt = now
 
@@ -139,7 +158,9 @@ public struct RunConfiguration: Codable, Identifiable, Equatable {
         paceTolerance: Int = 10,
         metronomeMinVolume: Float = 1.0,
         metronomeMaxVolume: Float = 1.0,
-        autoEndRun: Bool = true
+        autoEndRun: Bool = true,
+        strideLengthInches: Double? = nil,
+        paceCalibrationSeconds: Int? = nil
     ) {
         let expectedMiles = Int(ceil(distance.miles))
 
@@ -161,8 +182,67 @@ public struct RunConfiguration: Codable, Identifiable, Equatable {
         self.metronomeMinVolume = metronomeMinVolume
         self.metronomeMaxVolume = metronomeMaxVolume
         self.autoEndRun = autoEndRun
+        self.strideLengthInches = strideLengthInches
+        self.paceCalibrationSeconds = paceCalibrationSeconds
+        self.segments = nil
         self.createdAt = now
         self.modifiedAt = now
+    }
+
+    /// Creates a new RunConfiguration from multi-segment definition (Pro feature)
+    /// Distance and milePaces are derived from the segments
+    public init(
+        id: UUID = UUID(),
+        name: String,
+        segments: [RunSegment],
+        cadenceOffset: Int = 0,
+        paceTolerance: Int = 10,
+        metronomeMinVolume: Float = 1.0,
+        metronomeMaxVolume: Float = 1.0,
+        autoEndRun: Bool = true,
+        strideLengthInches: Double? = nil,
+        paceCalibrationSeconds: Int? = nil
+    ) {
+        precondition(!name.isEmpty, "Configuration name must not be empty")
+        precondition(!segments.isEmpty, "Segments must not be empty")
+        precondition(-15...15 ~= cadenceOffset,
+                     "Cadence offset must be -15 to +15 BPM, got \(cadenceOffset)")
+        precondition(paceTolerance > 0,
+                     "Pace tolerance must be positive, got \(paceTolerance)")
+
+        let now = Date()
+        self.id = id
+        self.name = name
+        self.segments = segments
+        self.cadenceOffset = cadenceOffset
+        self.paceTolerance = paceTolerance
+        self.metronomeMinVolume = metronomeMinVolume
+        self.metronomeMaxVolume = metronomeMaxVolume
+        self.autoEndRun = autoEndRun
+        self.strideLengthInches = strideLengthInches
+        self.paceCalibrationSeconds = paceCalibrationSeconds
+        self.createdAt = now
+        self.modifiedAt = now
+
+        // Derive total distance from segments
+        let totalMiles = segments.reduce(0.0) { $0 + $1.distance.miles }
+        self.distance = Distance(miles: totalMiles)
+
+        // Derive milePaces by flattening segments into per-mile paces
+        let mileCount = Int(ceil(totalMiles))
+        var paces: [Pace] = []
+        var cumulativeMiles = 0.0
+        var segmentIndex = 0
+        for mile in 0..<mileCount {
+            let mileStart = Double(mile)
+            // Find which segment this mile falls in
+            while segmentIndex < segments.count - 1 && mileStart >= cumulativeMiles + segments[segmentIndex].distance.miles {
+                cumulativeMiles += segments[segmentIndex].distance.miles
+                segmentIndex += 1
+            }
+            paces.append(segments[segmentIndex].pace)
+        }
+        self.milePaces = paces
     }
 
     // MARK: - Computed Properties
@@ -193,12 +273,52 @@ public struct RunConfiguration: Codable, Identifiable, Equatable {
         return baseBPM + cadenceOffset
     }
 
+    /// Whether this configuration requires Pro entitlement
+    /// Returns true for multi-segment configurations
+    public var requiresPro: Bool {
+        guard let segments = segments else { return false }
+        return segments.count > 1
+    }
+
+    /// Whether this is a multi-segment configuration
+    public var isMultiSegment: Bool {
+        guard let segments = segments else { return false }
+        return segments.count > 1
+    }
+
+    /// Returns the segment at a given cumulative distance in meters
+    public func segmentAtDistance(_ meters: Double) -> (index: Int, segment: RunSegment)? {
+        guard let segments = segments, !segments.isEmpty else { return nil }
+        var cumulative = 0.0
+        for (index, segment) in segments.enumerated() {
+            cumulative += segment.distance.meters
+            if meters < cumulative || index == segments.count - 1 {
+                return (index, segment)
+            }
+        }
+        return nil
+    }
+
+    /// Returns cumulative meter thresholds where each segment ends
+    public func segmentBoundaryDistances() -> [Double] {
+        guard let segments = segments else { return [] }
+        var boundaries: [Double] = []
+        var cumulative = 0.0
+        for segment in segments {
+            cumulative += segment.distance.meters
+            boundaries.append(cumulative)
+        }
+        return boundaries
+    }
+
     // MARK: - Codable
 
     /// Coding keys for custom encoding/decoding
     private enum CodingKeys: String, CodingKey {
         case id, name, distance, milePaces, baseCadence, cadenceOffset, paceTolerance
         case metronomeMinVolume, metronomeMaxVolume, autoEndRun
+        case strideLengthInches, paceCalibrationSeconds
+        case segments
         case createdAt, modifiedAt
     }
 
@@ -230,6 +350,9 @@ public struct RunConfiguration: Codable, Identifiable, Equatable {
         self.metronomeMinVolume = try container.decodeIfPresent(Float.self, forKey: .metronomeMinVolume) ?? 1.0
         self.metronomeMaxVolume = try container.decodeIfPresent(Float.self, forKey: .metronomeMaxVolume) ?? 1.0
         self.autoEndRun = try container.decodeIfPresent(Bool.self, forKey: .autoEndRun) ?? true
+        self.strideLengthInches = try container.decodeIfPresent(Double.self, forKey: .strideLengthInches)
+        self.paceCalibrationSeconds = try container.decodeIfPresent(Int.self, forKey: .paceCalibrationSeconds)
+        self.segments = try container.decodeIfPresent([RunSegment].self, forKey: .segments)
     }
 
     /// Custom encoder
@@ -244,6 +367,9 @@ public struct RunConfiguration: Codable, Identifiable, Equatable {
         try container.encode(metronomeMinVolume, forKey: .metronomeMinVolume)
         try container.encode(metronomeMaxVolume, forKey: .metronomeMaxVolume)
         try container.encode(autoEndRun, forKey: .autoEndRun)
+        try container.encodeIfPresent(strideLengthInches, forKey: .strideLengthInches)
+        try container.encodeIfPresent(paceCalibrationSeconds, forKey: .paceCalibrationSeconds)
+        try container.encodeIfPresent(segments, forKey: .segments)
         try container.encode(createdAt, forKey: .createdAt)
         try container.encode(modifiedAt, forKey: .modifiedAt)
     }

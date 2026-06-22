@@ -29,7 +29,6 @@ public final class PaceCalculator: PaceCalculatorProtocol {
     private var slowWindowMeters: Double = 1609.34      // 1 mile (default)
 
     private let minSamples: Int = 3
-    private let outlierThreshold: Double = 0.25  // 25%
     private let minimumDistanceDelta: Double = 0.5 // meters
     private let minimumTimeDelta: TimeInterval = 0.5
 
@@ -37,8 +36,13 @@ public final class PaceCalculator: PaceCalculatorProtocol {
 
     private let paceSubject = CurrentValueSubject<Pace?, Never>(nil)
     private var samples: [GPSSample] = []
-    private var lastDistance: Double?
-    private var lastTimestamp: Date?
+    private var lastAcceptedDistance: Double?
+    private var lastAcceptedTimestamp: Date?
+
+    // Debug: track previous pace values to detect large jumps
+    private var previousFastPace: Pace?
+    private var previousMediumPace: Pace?
+    private var previousSlowPace: Pace?
 
     // MARK: - Lifecycle
 
@@ -58,12 +62,12 @@ public final class PaceCalculator: PaceCalculatorProtocol {
 
     /// Fast pace - time-based rolling average (configurable, default 2 min)
     public var fastPace: Pace? {
-        calculateSmoothedPace(windowDuration: fastWindowSeconds)
+        calculateTimeBasedPace(windowDuration: fastWindowSeconds)
     }
 
     /// Medium pace - time-based rolling average (configurable, default 4 min)
     public var mediumPace: Pace? {
-        calculateSmoothedPace(windowDuration: mediumWindowSeconds)
+        calculateTimeBasedPace(windowDuration: mediumWindowSeconds)
     }
 
     /// Slow pace (master) - distance-based rolling average (configurable, default 1 mile)
@@ -96,20 +100,20 @@ public final class PaceCalculator: PaceCalculatorProtocol {
     public func addSample(distance: Double, timestamp: Date = Date()) {
         guard distance.isFinite, distance >= 0 else { return }
 
-        defer {
-            lastDistance = distance
-            lastTimestamp = timestamp
-        }
-
-        guard let previousDistance = lastDistance,
-              let previousTimestamp = lastTimestamp else {
-            // Need at least two samples to compute pace
+        // First sample: just record baseline, don't compute pace yet
+        guard let previousDistance = lastAcceptedDistance,
+              let previousTimestamp = lastAcceptedTimestamp else {
+            lastAcceptedDistance = distance
+            lastAcceptedTimestamp = timestamp
             return
         }
 
         let deltaDistance = distance - previousDistance
         let deltaTime = timestamp.timeIntervalSince(previousTimestamp)
 
+        // Only accept samples with meaningful deltas
+        // IMPORTANT: Do NOT update lastAccepted* when rejecting — the next
+        // accepted sample must compute speed from the last accepted baseline
         guard deltaDistance >= minimumDistanceDelta,
               deltaTime >= minimumTimeDelta else {
             return
@@ -119,19 +123,33 @@ public final class PaceCalculator: PaceCalculatorProtocol {
         let sample = GPSSample(timestamp: timestamp, speed: speed, cumulativeDistance: distance)
         guard sample.isValid else { return }
 
+        // Now update the accepted baseline
+        lastAcceptedDistance = distance
+        lastAcceptedTimestamp = timestamp
+
+        // Debug: log outlier samples (speed > 1 std dev from recent mean)
+        logIfOutlier(sample)
+
         samples.append(sample)
         purgeOldSamples()
 
         // Publish fast pace for real-time updates
-        if let pace = calculateSmoothedPace(windowDuration: fastWindowSeconds) {
+        let newFastPace = calculateTimeBasedPace(windowDuration: fastWindowSeconds)
+        if let pace = newFastPace {
             paceSubject.send(pace)
         }
+
+        // Debug: detect and log large jumps in any pace window
+        logPaceJumps(newFastPace: newFastPace)
     }
 
     public func reset() {
         samples.removeAll()
-        lastDistance = nil
-        lastTimestamp = nil
+        lastAcceptedDistance = nil
+        lastAcceptedTimestamp = nil
+        previousFastPace = nil
+        previousMediumPace = nil
+        previousSlowPace = nil
         paceSubject.send(nil)
     }
 
@@ -146,19 +164,30 @@ public final class PaceCalculator: PaceCalculatorProtocol {
         samples.removeAll { $0.timestamp < cutoff }
     }
 
-    private func calculateSmoothedPace(windowDuration: TimeInterval) -> Pace? {
+    /// Calculate pace for a time-based window using distance/time approach
+    /// (more stable than weighted average of per-sample speeds)
+    private func calculateTimeBasedPace(windowDuration: TimeInterval) -> Pace? {
         guard !samples.isEmpty else { return nil }
 
-        // Filter samples within the specified window
-        // Use the last sample's timestamp as reference, not current time
         guard let lastSampleTime = samples.last?.timestamp else { return nil }
         let cutoff = lastSampleTime.addingTimeInterval(-windowDuration)
         let windowSamples = samples.filter { $0.timestamp >= cutoff }
 
         guard windowSamples.count >= minSamples else { return nil }
-        let filtered = removeOutliers(from: windowSamples)
-        guard filtered.count >= minSamples else { return nil }
-        return weightedAveragePace(from: filtered)
+
+        // Use distance/time calculation (same approach as distance-based window)
+        // This is mathematically equivalent to average pace and avoids noise
+        // from per-sample instantaneous speed variations
+        guard let firstSample = windowSamples.first,
+              let lastSample = windowSamples.last else { return nil }
+
+        let distanceCovered = lastSample.cumulativeDistance - firstSample.cumulativeDistance
+        let timeTaken = lastSample.timestamp.timeIntervalSince(firstSample.timestamp)
+
+        guard distanceCovered > 0, timeTaken > 0 else { return nil }
+
+        let secondsPerMeter = timeTaken / distanceCovered
+        return Pace(secondsPerMeter: secondsPerMeter)
     }
 
     /// Calculate pace based on distance window (e.g., last 1 mile)
@@ -192,43 +221,60 @@ public final class PaceCalculator: PaceCalculatorProtocol {
         return Pace(secondsPerMeter: secondsPerMeter)
     }
 
-    private func removeOutliers(from samples: [GPSSample]) -> [GPSSample] {
-        let sortedSeconds = samples
-            .map(\.secondsPerMeter)
-            .sorted()
+    // MARK: - Debug Logging
 
-        guard !sortedSeconds.isEmpty else { return samples }
+    /// Log when a new sample's speed deviates significantly from the recent mean
+    private func logIfOutlier(_ newSample: GPSSample) {
+        // Need enough samples to compute meaningful stats
+        guard samples.count >= 10 else { return }
 
-        let median: Double
-        if sortedSeconds.count % 2 == 0 {
-            let mid = sortedSeconds.count / 2
-            median = (sortedSeconds[mid - 1] + sortedSeconds[mid]) / 2.0
-        } else {
-            median = sortedSeconds[sortedSeconds.count / 2]
-        }
+        // Compute mean and std dev of recent sample speeds (secondsPerMeter)
+        let recentCount = min(samples.count, 30)
+        let recentSamples = samples.suffix(recentCount)
+        let speeds = recentSamples.map(\.secondsPerMeter)
 
-        let threshold = median * outlierThreshold
+        let mean = speeds.reduce(0, +) / Double(speeds.count)
+        let variance = speeds.reduce(0) { $0 + ($1 - mean) * ($1 - mean) } / Double(speeds.count)
+        let stdDev = sqrt(variance)
 
-        return samples.filter {
-            abs($0.secondsPerMeter - median) <= threshold
+        guard stdDev > 0 else { return }
+
+        let deviation = abs(newSample.secondsPerMeter - mean)
+        if deviation > stdDev {
+            let samplePaceSeconds = Int(newSample.secondsPerMeter * 1609.34)
+            let meanPaceSeconds = Int(mean * 1609.34)
+            let stdDevSeconds = Int(stdDev * 1609.34)
+            let sigmas = deviation / stdDev
+            print("PaceCalc.OUTLIER: sample=\(formatSeconds(samplePaceSeconds))/mi mean=\(formatSeconds(meanPaceSeconds))/mi stdDev=\(stdDevSeconds)s sigmas=\(String(format: "%.1f", sigmas)) speed=\(String(format: "%.2f", newSample.speed))m/s sampleCount=\(samples.count)")
         }
     }
 
-    private func weightedAveragePace(from samples: [GPSSample]) -> Pace? {
-        guard !samples.isEmpty else { return nil }
+    /// Log when a computed pace window jumps by more than 15 seconds from its previous value
+    private func logPaceJumps(newFastPace: Pace?) {
+        let newMediumPace = mediumPace
+        let newSlowPace = slowPace
 
-        var weightedSum: Double = 0
-        var totalWeight: Double = 0
+        logJump(label: "FAST", previous: previousFastPace, current: newFastPace)
+        logJump(label: "MEDIUM", previous: previousMediumPace, current: newMediumPace)
+        logJump(label: "SLOW", previous: previousSlowPace, current: newSlowPace)
 
-        for (index, sample) in samples.sorted(by: { $0.timestamp < $1.timestamp }).enumerated() {
-            let weight = Double(index + 1)
-            weightedSum += sample.secondsPerMeter * weight
-            totalWeight += weight
+        previousFastPace = newFastPace
+        previousMediumPace = newMediumPace
+        previousSlowPace = newSlowPace
+    }
+
+    private func logJump(label: String, previous: Pace?, current: Pace?) {
+        guard let prev = previous, let curr = current else { return }
+        let jump = abs(curr.totalSeconds - prev.totalSeconds)
+        if jump >= 15 {
+            print("PaceCalc.JUMP[\(label)]: \(prev.formatted) → \(curr.formatted) (±\(jump)s) sampleCount=\(samples.count)")
         }
+    }
 
-        guard totalWeight > 0 else { return nil }
-        let secondsPerMeter = weightedSum / totalWeight
-        return Pace(secondsPerMeter: secondsPerMeter)
+    private func formatSeconds(_ totalSeconds: Int) -> String {
+        let m = totalSeconds / 60
+        let s = totalSeconds % 60
+        return String(format: "%d:%02d", m, s)
     }
 
     // MARK: - Pace Status

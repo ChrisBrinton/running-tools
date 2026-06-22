@@ -1,0 +1,38 @@
+services:
+  pacerunner-server:
+    build: .
+    image: pacerunner-server:latest
+    container_name: pacerunner-server
+    restart: unless-stopped
+    environment:
+      - PORT=8080
+      - PACERUNNER_DATA_DIR=/data
+    volumes:
+      - ./data:/data
+    expose:
+      - "8080"
+    networks:
+      - pacerunner
+
+  caddy:
+    image: caddy:2-alpine
+    container_name: pacerunner-caddy
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    depends_on:
+      - pacerunner-server
+    networks:
+      - pacerunner
+
+networks:
+  pacerunner:
+
+volumes:
+  caddy_data:
+  caddy_config:

@@ -4,21 +4,23 @@ import PaceRunnerShared
 struct WorkoutContainerView: View {
     @StateObject private var viewModel: WorkoutViewModel
     private let onExit: () -> Void
+    private let onNewRun: ((RunConfiguration) -> Void)?
 
     init(
         configuration: RunConfiguration,
         workoutManager: WorkoutManagerProtocol,
         syncManager: SyncManagerProtocol?,
         workoutStore: WatchWorkoutStore? = nil,
-        onExit: @escaping () -> Void
+        onExit: @escaping () -> Void,
+        onNewRun: ((RunConfiguration) -> Void)? = nil
     ) {
         _viewModel = StateObject(wrappedValue: WorkoutViewModel(
             workoutManager: workoutManager,
             configuration: configuration,
-            syncManager: syncManager,
-            workoutStore: workoutStore
+            syncManager: syncManager
         ))
         self.onExit = onExit
+        self.onNewRun = onNewRun
     }
 
     var body: some View {
@@ -37,7 +39,8 @@ struct WorkoutContainerView: View {
             PreWorkoutView(
                 configuration: viewModel.state.configuration,
                 startAction: { viewModel.start() },
-                changeAction: exitWorkout
+                changeAction: exitWorkout,
+                newRunAction: onNewRun
             )
 
         case .running, .paused:
@@ -52,7 +55,8 @@ struct WorkoutContainerView: View {
                 PreWorkoutView(
                     configuration: viewModel.state.configuration,
                     startAction: { viewModel.start() },
-                    changeAction: exitWorkout
+                    changeAction: exitWorkout,
+                    newRunAction: onNewRun
                 )
             }
 
@@ -60,7 +64,8 @@ struct WorkoutContainerView: View {
             PreWorkoutView(
                 configuration: viewModel.state.configuration,
                 startAction: { viewModel.start() },
-                changeAction: exitWorkout
+                changeAction: exitWorkout,
+                newRunAction: onNewRun
             )
         }
     }

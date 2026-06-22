@@ -32,6 +32,9 @@ public struct MileSplit: Codable, Equatable {
     /// Example: Marathon final mile is 0.2 miles
     public let distance: Distance
 
+    /// Average heart rate during this mile (nil for legacy data or no HR sensor)
+    public let averageHeartRate: Int?
+
     // MARK: - Initialization
 
     /// Creates a new mile split entry
@@ -40,14 +43,32 @@ public struct MileSplit: Codable, Equatable {
     ///   - actualPace: Pace achieved for this mile
     ///   - targetPace: Goal pace for this mile
     ///   - distance: Distance covered for this marker (defaults handled by caller)
+    ///   - averageHeartRate: Average HR in BPM for this mile (optional)
     public init(mileNumber: Int,
                 actualPace: Pace,
                 targetPace: Pace,
-                distance: Distance) {
+                distance: Distance,
+                averageHeartRate: Int? = nil) {
         self.mileNumber = mileNumber
         self.actualPace = actualPace
         self.targetPace = targetPace
         self.distance = distance
+        self.averageHeartRate = averageHeartRate
+    }
+
+    // MARK: - Codable (backward compatible)
+
+    private enum CodingKeys: String, CodingKey {
+        case mileNumber, actualPace, targetPace, distance, averageHeartRate
+    }
+
+    public init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        self.mileNumber = try container.decode(Int.self, forKey: .mileNumber)
+        self.actualPace = try container.decode(Pace.self, forKey: .actualPace)
+        self.targetPace = try container.decode(Pace.self, forKey: .targetPace)
+        self.distance = try container.decode(Distance.self, forKey: .distance)
+        self.averageHeartRate = try container.decodeIfPresent(Int.self, forKey: .averageHeartRate)
     }
 
     // MARK: - Computed Properties

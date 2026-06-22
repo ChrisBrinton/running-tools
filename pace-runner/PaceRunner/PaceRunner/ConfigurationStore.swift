@@ -120,6 +120,12 @@ class ConfigurationStore: ObservableObject {
         syncAllConfigurations()
     }
 
+    /// Clears all configurations (used by debug reset)
+    func resetAll() {
+        configurations = []
+        UserDefaults.standard.removeObject(forKey: Self.storageKey)
+    }
+
     // MARK: - Private Methods
 
     private func loadConfigurations() {
@@ -141,6 +147,16 @@ class ConfigurationStore: ObservableObject {
     /// Syncs all configurations to watch, replacing watch storage
     func syncAllConfigurations() {
         syncManager.syncAllConfigurations(configurations)
+    }
+
+    /// Manual force sync — tries direct sendMessage, reports result clearly
+    func forceSyncToWatch() {
+        syncStatus = .syncing
+        syncManager.forceSyncAllConfigurations(configurations) { [weak self] result in
+            DispatchQueue.main.async {
+                self?.syncStatus = result
+            }
+        }
     }
 
     private func saveConfigurations() {

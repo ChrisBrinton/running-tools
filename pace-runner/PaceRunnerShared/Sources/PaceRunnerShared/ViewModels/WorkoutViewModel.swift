@@ -1,32 +1,32 @@
 import Foundation
 import Combine
-import PaceRunnerShared
 
 /// Bridges `WorkoutManager` state to SwiftUI views.
-final class WorkoutViewModel: ObservableObject {
-    @Published private(set) var state: WorkoutState
+///
+/// Used on both watchOS and iOS. Saving workout history is handled by
+/// listening to `.workoutDidEnd` notifications elsewhere — this view model
+/// just bridges the workout manager state.
+public final class WorkoutViewModel: ObservableObject {
+    @Published public private(set) var state: WorkoutState
 
-    @Published var isShowingSummary: Bool = false
-    @Published var isShowingPauseOverlay: Bool = false
+    @Published public var isShowingSummary: Bool = false
+    @Published public var isShowingPauseOverlay: Bool = false
 
     private let workoutManager: WorkoutManagerProtocol
     private let syncManager: SyncManagerProtocol?
-    private let workoutStore: WatchWorkoutStore?
     private var cancellables = Set<AnyCancellable>()
 
     /// App settings for display formatting
-    let settings: AppSettings
+    public let settings: AppSettings
 
-    init(
+    public init(
         workoutManager: WorkoutManagerProtocol,
         configuration: RunConfiguration,
         syncManager: SyncManagerProtocol? = nil,
-        workoutStore: WatchWorkoutStore? = nil,
         settings: AppSettings = AppSettings.load()
     ) {
         self.workoutManager = workoutManager
         self.syncManager = syncManager
-        self.workoutStore = workoutStore
         self.settings = settings
         self.state = WorkoutState(configuration: configuration)
         bindState()
@@ -44,7 +44,7 @@ final class WorkoutViewModel: ObservableObject {
             .store(in: &cancellables)
     }
 
-    func start() {
+    public func start() {
         do {
             try workoutManager.startWorkout(with: state.configuration)
         } catch {
@@ -52,7 +52,7 @@ final class WorkoutViewModel: ObservableObject {
         }
     }
 
-    func pause() {
+    public func pause() {
         do {
             print("WorkoutViewModel.pause() invoked")
             try workoutManager.pauseWorkout()
@@ -63,7 +63,7 @@ final class WorkoutViewModel: ObservableObject {
         }
     }
 
-    func resume() {
+    public func resume() {
         do {
             print("WorkoutViewModel.resume() invoked")
             try workoutManager.resumeWorkout()
@@ -74,50 +74,51 @@ final class WorkoutViewModel: ObservableObject {
         }
     }
 
-    func end() {
+    public func end() {
         do {
             print("WorkoutViewModel.end() invoked")
-            let summary = try workoutManager.endWorkout()
-
-            // Save locally first (ensures data survives even if sync fails)
-            if let store = workoutStore {
-                store.save(summary)
-            } else {
-                // Fallback: direct sync if no store available
-                syncManager?.syncWorkoutSummary(summary)
-            }
-
+            // endWorkout() posts .workoutDidEnd notification
+            // History stores listen for it and save automatically
+            // (covers both this manual path and auto-end path)
+            _ = try workoutManager.endWorkout()
             isShowingSummary = true
         } catch {
             print("WorkoutViewModel.end error: \(error)")
         }
     }
 
-    func cancel() {
+    public func cancel() {
         workoutManager.cancelWorkout()
         isShowingSummary = false
         isShowingPauseOverlay = false
         state = WorkoutState(configuration: state.configuration)
     }
 
-    func formattedPace() -> String {
+    public func formattedPace() -> String {
         state.currentPace?.formatted ?? "--:--"
     }
 
-    func formattedDistance() -> String {
+    public func formattedDistance() -> String {
         Distance(meters: state.distanceCovered).formatted
     }
 
-    func formattedTime() -> String {
+    public func formattedTime() -> String {
         let minutes = Int(state.elapsedTime) / 60
         let seconds = Int(state.elapsedTime) % 60
         return String(format: "%d:%02d", minutes, seconds)
     }
 
+    public func formattedHeartRate() -> String {
+        if let hr = state.currentHeartRate {
+            return "\(hr)"
+        }
+        return "---"
+    }
+
     // MARK: - Pace Window Labels
 
     /// Label for slow (master) pace window based on settings
-    var slowPaceLabel: String {
+    public var slowPaceLabel: String {
         let miles = settings.slowAverageMiles
         if miles == 1.0 {
             return "1mi"
@@ -129,12 +130,12 @@ final class WorkoutViewModel: ObservableObject {
     }
 
     /// Label for medium pace window based on settings
-    var mediumPaceLabel: String {
+    public var mediumPaceLabel: String {
         "\(settings.mediumAverageSeconds)s"
     }
 
     /// Label for fast pace window based on settings
-    var fastPaceLabel: String {
+    public var fastPaceLabel: String {
         "\(settings.fastAverageSeconds)s"
     }
 }

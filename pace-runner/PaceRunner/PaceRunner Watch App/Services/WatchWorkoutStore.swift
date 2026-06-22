@@ -50,29 +50,83 @@ final class WatchWorkoutStore: ObservableObject {
             }
             .store(in: &cancellables)
 
-        // Also listen for reachability via notification if available
+        // Listen for reachability via notification
         NotificationCenter.default.publisher(for: .watchConnectivityReachable)
             .receive(on: DispatchQueue.main)
             .sink { [weak self] _ in
                 self?.retryPendingSyncs()
             }
             .store(in: &cancellables)
+
+        // Listen for phone requesting workouts
+        NotificationCenter.default.publisher(for: .phoneRequestedWorkouts)
+            .receive(on: DispatchQueue.main)
+            .sink { [weak self] _ in
+                self?.sendAllWorkoutsToPhone()
+            }
+            .store(in: &cancellables)
+
+        // Listen for sync acknowledgments from phone
+        NotificationCenter.default.publisher(for: .workoutSyncAckReceived)
+            .receive(on: DispatchQueue.main)
+            .compactMap { $0.object as? UUID }
+            .sink { [weak self] workoutID in
+                self?.markAsSynced(workoutID)
+            }
+            .store(in: &cancellables)
+
+        // Listen for workout endings (covers both manual and auto-end paths)
+        NotificationCenter.default.publisher(for: .workoutDidEnd)
+            .receive(on: DispatchQueue.main)
+            .compactMap { $0.object as? WorkoutSummary }
+            .sink { [weak self] summary in
+                print("[WatchWorkoutStore] Received workoutDidEnd notification")
+                self?.save(summary)
+            }
+            .store(in: &cancellables)
+
+        // Listen for reset-all command from iPhone
+        NotificationCenter.default.publisher(for: .resetAllReceived)
+            .receive(on: DispatchQueue.main)
+            .sink { [weak self] _ in
+                self?.summaries = []
+                self?.syncedIDs = []
+                UserDefaults.standard.removeObject(forKey: Self.summariesKey)
+                UserDefaults.standard.removeObject(forKey: Self.syncedIDsKey)
+                print("[WatchWorkoutStore] Reset all data")
+            }
+            .store(in: &cancellables)
+
+        // Retry unsynced workouts shortly after launch (session may need time to activate)
+        DispatchQueue.main.asyncAfter(deadline: .now() + 3) { [weak self] in
+            self?.retryPendingSyncs()
+        }
+
+        print("\(logPrefix) Initialized: \(summaries.count) stored, \(unsyncedSummaries.count) unsynced")
     }
 
     // MARK: - Public API
 
     /// Saves a workout summary locally and attempts to sync to phone.
+    ///
+    /// The full `debugLog` is intentionally stripped before persistence and
+    /// sync — verbose GPS workouts can produce >1MB of debug events, which
+    /// caused crashes on small watch memory (UserDefaults OOM) and oversize
+    /// WatchConnectivity payloads. The log is preserved separately via
+    /// `WorkoutManager.saveDebugLog()` (UserDefaults `lastDebugLog`) and
+    /// synced via `SyncManager.syncDebugLog`.
+    ///
     /// - Parameter summary: The workout summary to save
     func save(_ summary: WorkoutSummary) {
-        // Save locally first (ensures data is never lost)
-        if !summaries.contains(where: { $0.id == summary.id }) {
-            summaries.insert(summary, at: 0)
+        let lean = summary.withoutDebugLog()
+        if !summaries.contains(where: { $0.id == lean.id }) {
+            summaries.insert(lean, at: 0)
             persistSummaries()
-            print("\(logPrefix) Saved workout locally: \(summary.id)")
+            print("\(logPrefix) Saved workout locally (debug log stripped): \(lean.id)")
         }
 
         // Attempt to sync to phone
-        syncToPhone(summary)
+        syncToPhone(lean)
     }
 
     /// Marks a summary as successfully synced.
@@ -88,15 +142,44 @@ final class WatchWorkoutStore: ObservableObject {
         summaries.filter { !syncedIDs.contains($0.id) }
     }
 
-    /// Manually trigger sync retry for all unsynced workouts.
+    /// Retry syncing all unsynced workouts using sendMessage when reachable,
+    /// falling back to transferUserInfo otherwise.
     func retryPendingSyncs() {
         let pending = unsyncedSummaries
         guard !pending.isEmpty else { return }
 
-        print("\(logPrefix) Retrying sync for \(pending.count) unsynced workouts")
-        for summary in pending {
-            syncToPhone(summary)
+        // Prefer sendMessage (force sync) since transferUserInfo has proven unreliable
+        if syncManager.isWatchReachable {
+            print("\(logPrefix) Retrying sync for \(pending.count) unsynced workouts via sendMessage (reachable)")
+            for summary in pending {
+                _ = syncManager.forceSyncWorkoutSummary(summary)
+            }
+        } else {
+            print("\(logPrefix) Retrying sync for \(pending.count) unsynced workouts via transferUserInfo (not reachable)")
+            for summary in pending {
+                syncToPhone(summary)
+            }
         }
+    }
+
+    /// Force sync all workouts using sendMessage (requires both apps active).
+    /// Returns (sent, total) count for UI feedback.
+    func forceSync() -> (sent: Int, total: Int) {
+        let all = summaries
+        guard !all.isEmpty else {
+            print("\(logPrefix) forceSync: no workouts to sync")
+            return (0, 0)
+        }
+
+        print("\(logPrefix) forceSync: attempting sendMessage for \(all.count) workouts")
+        var sentCount = 0
+        for summary in all {
+            if syncManager.forceSyncWorkoutSummary(summary) {
+                sentCount += 1
+            }
+        }
+        print("\(logPrefix) forceSync: sent \(sentCount)/\(all.count)")
+        return (sentCount, all.count)
     }
 
     /// Deletes a workout from local storage.
@@ -124,21 +207,53 @@ final class WatchWorkoutStore: ObservableObject {
     // MARK: - Private Helpers
 
     private func syncToPhone(_ summary: WorkoutSummary) {
-        print("\(logPrefix) Attempting sync to phone: \(summary.id)")
-        syncManager.syncWorkoutSummary(summary)
+        // Try sendMessage first (reliable when reachable), fall back to transferUserInfo
+        if syncManager.isWatchReachable {
+            print("\(logPrefix) Syncing to phone via sendMessage: \(summary.id)")
+            _ = syncManager.forceSyncWorkoutSummary(summary)
+        } else {
+            print("\(logPrefix) Queuing sync via transferUserInfo (not reachable): \(summary.id)")
+            syncManager.syncWorkoutSummary(summary)
+        }
+        // Don't mark as synced here - wait for acknowledgment from phone
+    }
 
-        // Optimistically mark as synced after a delay
-        // In a production app, you'd want confirmation from the phone
-        DispatchQueue.main.asyncAfter(deadline: .now() + 2.0) { [weak self] in
-            self?.markAsSynced(summary.id)
+    /// Send all workouts to phone (called when phone requests them).
+    /// Uses sendMessage since phone must be reachable to have sent the request.
+    private func sendAllWorkoutsToPhone() {
+        print("\(logPrefix) Phone requested workouts, sending \(summaries.count) total via sendMessage")
+
+        for summary in summaries {
+            _ = syncManager.forceSyncWorkoutSummary(summary)
         }
     }
 
+    private static let loadInProgressKey = "watchWorkoutStore_loadInProgress"
+
     private func loadSummaries() {
-        guard let data = UserDefaults.standard.data(forKey: Self.summariesKey) else {
+        // Crash-recovery tombstone: if the last launch died while decoding
+        // summaries (OOM from oversize blobs kills the process — no catch
+        // possible), the flag below will still be set when we get here.
+        // Treat the stored blob as corrupt and start clean instead of
+        // crashing again in an infinite loop.
+        let defaults = UserDefaults.standard
+        if defaults.bool(forKey: Self.loadInProgressKey) {
+            print("\(logPrefix) Previous launch crashed during summary load — clearing corrupt blob")
+            defaults.removeObject(forKey: Self.summariesKey)
+            defaults.set(false, forKey: Self.loadInProgressKey)
+            defaults.synchronize()
+            return
+        }
+
+        guard let data = defaults.data(forKey: Self.summariesKey) else {
             print("\(logPrefix) No local summaries found")
             return
         }
+
+        // Set tombstone, decode, then clear. If the decode crashes the process,
+        // the next launch will see the tombstone and wipe the data.
+        defaults.set(true, forKey: Self.loadInProgressKey)
+        defaults.synchronize()
 
         do {
             summaries = try decoder.decode([WorkoutSummary].self, from: data)
@@ -146,7 +261,12 @@ final class WatchWorkoutStore: ObservableObject {
             print("\(logPrefix) Loaded \(summaries.count) local summaries")
         } catch {
             print("\(logPrefix) Failed to decode summaries: \(error)")
+            // Decode threw — corrupt data. Drop it so we don't re-crash.
+            defaults.removeObject(forKey: Self.summariesKey)
         }
+
+        defaults.set(false, forKey: Self.loadInProgressKey)
+        defaults.synchronize()
     }
 
     private func persistSummaries() {

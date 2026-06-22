@@ -61,6 +61,13 @@ public protocol AudioEngineProtocol: AnyObject {
     /// - Parameter isTooSlow: true = higher pitch (encourage speed up), false = lower pitch (encourage slow down)
     func updateBeatFrequency(isTooSlow: Bool)
 
+    /// Reset beat frequency to normal pitch (on-pace)
+    func resetBeatFrequency()
+
+    /// Set emphasis beat mode for pace direction feedback
+    /// - Parameter mode: 1 = upbeat (speed up), -1 = downbeat (slow down), 0 = normal
+    func setEmphasisBeatMode(_ mode: Int)
+
     /// Configures emphasis beat settings
     /// - Parameters:
     ///   - enabled: Whether emphasis beats are enabled

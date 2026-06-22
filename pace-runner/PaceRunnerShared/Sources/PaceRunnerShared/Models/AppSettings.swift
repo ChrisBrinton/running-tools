@@ -73,10 +73,24 @@ public struct AppSettings: Codable, Equatable {
     /// Default: true
     public var announceMileMarkers: Bool
 
+    /// Debug override for Pro entitlement — syncs between iPhone and Watch
+    /// Default: false
+    public var debugProOverride: Bool
+
     /// Whether to play debug sounds for GPS filtering (woodblock clicks)
     /// Helps diagnose overly aggressive GPS filtering
     /// Default: false
     public var gpsFilterDebugSounds: Bool
+
+    /// Whether to log detailed per-sample GPS data to the debug log.
+    /// Captures lat/lng/accuracy/speed/course/delta for every sample.
+    /// Useful for diagnosing systematic distance errors at specific locations.
+    /// Default: false
+    public var verboseGPSLogging: Bool
+
+    /// Distance accumulation method used for the active workout total.
+    /// Default: .chord (historical behavior).
+    public var distanceCalcMethod: DistanceCalcMethod
 
     /// Whether to play emphasis beats (accented beat on interval)
     /// Can be used with or without regular metronome beats
@@ -128,7 +142,7 @@ public struct AppSettings: Codable, Equatable {
     /// Formula: BPM = (pace in min/mile) / (stride in inches) * conversion
     /// Typical range: 24-36 inches
     /// Default: 30 inches
-    public var strideLengthInches: Int
+    public var strideLengthInches: Double
 
     // MARK: - Pace Calibration
 
@@ -144,6 +158,16 @@ public struct AppSettings: Codable, Equatable {
     /// Default pace tolerance for new run configurations (seconds)
     /// Default: 10 seconds
     public var defaultTolerance: Int
+
+    // MARK: - Quick-Create Presets
+
+    /// Common distances shown in quick-create flow (in miles)
+    /// Default: [3, 5, 10, 13.1, 26.2]
+    public var commonDistances: [Double]
+
+    /// Named pace presets for quick-create flow
+    /// Default: Easy (10:00), Tempo (8:30), Fast (7:30)
+    public var namedPaces: [NamedPace]
 
     // MARK: - Initialization
 
@@ -161,7 +185,10 @@ public struct AppSettings: Codable, Equatable {
         self.masterVolume = 1.0
         self.beatVolume = 10.0  // Medium (scale: 3=low, 10=medium, 30=high)
         self.announceMileMarkers = true
+        self.debugProOverride = false
         self.gpsFilterDebugSounds = false
+        self.verboseGPSLogging = false
+        self.distanceCalcMethod = .chord
         self.emphasisBeatEnabled = false
         self.emphasisBeatInterval = 2  // Every other beat
 
@@ -176,11 +203,15 @@ public struct AppSettings: Codable, Equatable {
         self.slowAverageMiles = 1.0      // 1 mile
 
         // Stride and calibration defaults
-        self.strideLengthInches = 30     // 30 inches typical stride
+        self.strideLengthInches = 30.0   // 30 inches typical stride
         self.paceCalibrationSeconds = 0  // No calibration
 
         // Configuration defaults
         self.defaultTolerance = 10
+
+        // Quick-create presets
+        self.commonDistances = Self.defaultCommonDistances
+        self.namedPaces = Self.defaultNamedPaces
     }
 
     /// Creates AppSettings with custom values
@@ -206,6 +237,8 @@ public struct AppSettings: Codable, Equatable {
     ///   - strideLengthInches: User's stride length for BPM calculation (20-50 inches)
     ///   - paceCalibrationSeconds: Pace calibration offset (-15 to +15 seconds)
     ///   - defaultTolerance: Default tolerance for new configs
+    ///   - commonDistances: Common distances for quick-create
+    ///   - namedPaces: Named pace presets for quick-create
     public init(
         companionMode: Bool = true,
         useHealthKitDistance: Bool = true,
@@ -216,7 +249,10 @@ public struct AppSettings: Codable, Equatable {
         masterVolume: Float = 1.0,
         beatVolume: Float = 10.0,
         announceMileMarkers: Bool = true,
+        debugProOverride: Bool = false,
         gpsFilterDebugSounds: Bool = false,
+        verboseGPSLogging: Bool = false,
+        distanceCalcMethod: DistanceCalcMethod = .chord,
         emphasisBeatEnabled: Bool = false,
         emphasisBeatInterval: Int = 2,
         useMetricUnits: Bool = false,
@@ -225,9 +261,11 @@ public struct AppSettings: Codable, Equatable {
         fastAverageSeconds: Int = 120,
         mediumAverageSeconds: Int = 240,
         slowAverageMiles: Double = 1.0,
-        strideLengthInches: Int = 30,
+        strideLengthInches: Double = 30.0,
         paceCalibrationSeconds: Int = 0,
-        defaultTolerance: Int = 10
+        defaultTolerance: Int = 10,
+        commonDistances: [Double]? = nil,
+        namedPaces: [NamedPace]? = nil
     ) {
         precondition(alertThrottleInterval > 0,
                      "Alert throttle interval must be positive")
@@ -245,7 +283,10 @@ public struct AppSettings: Codable, Equatable {
         self.masterVolume = masterVolume
         self.beatVolume = beatVolume
         self.announceMileMarkers = announceMileMarkers
+        self.debugProOverride = debugProOverride
         self.gpsFilterDebugSounds = gpsFilterDebugSounds
+        self.verboseGPSLogging = verboseGPSLogging
+        self.distanceCalcMethod = distanceCalcMethod
         self.emphasisBeatEnabled = emphasisBeatEnabled
         self.emphasisBeatInterval = emphasisBeatInterval
         self.useMetricUnits = useMetricUnits
@@ -257,6 +298,8 @@ public struct AppSettings: Codable, Equatable {
         self.strideLengthInches = strideLengthInches
         self.paceCalibrationSeconds = paceCalibrationSeconds
         self.defaultTolerance = defaultTolerance
+        self.commonDistances = commonDistances ?? Self.defaultCommonDistances
+        self.namedPaces = namedPaces ?? Self.defaultNamedPaces
     }
 
     // MARK: - UserDefaults Integration
@@ -302,7 +345,15 @@ public struct AppSettings: Codable, Equatable {
         self.masterVolume = try container.decodeIfPresent(Float.self, forKey: .masterVolume) ?? 1.0
         self.beatVolume = try container.decodeIfPresent(Float.self, forKey: .beatVolume) ?? 10.0
         self.announceMileMarkers = try container.decodeIfPresent(Bool.self, forKey: .announceMileMarkers) ?? true
+        self.debugProOverride = try container.decodeIfPresent(Bool.self, forKey: .debugProOverride) ?? false
         self.gpsFilterDebugSounds = try container.decodeIfPresent(Bool.self, forKey: .gpsFilterDebugSounds) ?? false
+        self.verboseGPSLogging = try container.decodeIfPresent(Bool.self, forKey: .verboseGPSLogging) ?? false
+        if let raw = try container.decodeIfPresent(String.self, forKey: .distanceCalcMethod),
+           let method = DistanceCalcMethod(rawValue: raw) {
+            self.distanceCalcMethod = method
+        } else {
+            self.distanceCalcMethod = .chord
+        }
 
         // Emphasis beat settings with defaults
         self.emphasisBeatEnabled = try container.decodeIfPresent(Bool.self, forKey: .emphasisBeatEnabled) ?? false
@@ -314,8 +365,12 @@ public struct AppSettings: Codable, Equatable {
         self.slowAverageMiles = try container.decodeIfPresent(Double.self, forKey: .slowAverageMiles) ?? 1.0
 
         // Stride and calibration with defaults
-        self.strideLengthInches = try container.decodeIfPresent(Int.self, forKey: .strideLengthInches) ?? 30
+        self.strideLengthInches = try container.decodeIfPresent(Double.self, forKey: .strideLengthInches) ?? 30.0
         self.paceCalibrationSeconds = try container.decodeIfPresent(Int.self, forKey: .paceCalibrationSeconds) ?? 0
+
+        // Quick-create presets with defaults
+        self.commonDistances = try container.decodeIfPresent([Double].self, forKey: .commonDistances) ?? Self.defaultCommonDistances
+        self.namedPaces = try container.decodeIfPresent([NamedPace].self, forKey: .namedPaces) ?? Self.defaultNamedPaces
     }
 
     // MARK: - Computed Properties
@@ -327,7 +382,59 @@ public struct AppSettings: Codable, Equatable {
     /// - Returns: Calculated BPM for the given pace
     public func calculateBaseBPM(for pace: Pace) -> Int {
         let inchesPerMile: Double = 63360.0
-        let stepsPerMile = inchesPerMile / Double(strideLengthInches)
+        let stepsPerMile = inchesPerMile / strideLengthInches
+        let paceMinutes = Double(pace.totalSeconds) / 60.0
+        let bpm = stepsPerMile / paceMinutes
+        return Int(round(bpm))
+    }
+
+    // MARK: - Quick-Create Defaults
+
+    /// Default common distances for quick-create (in miles)
+    public static let defaultCommonDistances: [Double] = [3, 5, 10, 13.1, 26.2]
+
+    /// Default named paces for quick-create (ordered fastest to slowest)
+    public static let defaultNamedPaces: [NamedPace] = [
+        NamedPace(name: "Tempo", pace: Pace(minutes: 7, seconds: 30)),
+        NamedPace(name: "Easy", pace: Pace(minutes: 10, seconds: 0)),
+        NamedPace(name: "Recovery", pace: Pace(minutes: 12, seconds: 0))
+    ]
+
+    /// Derives a configuration name from distance and pace name
+    /// - Parameters:
+    ///   - distanceMiles: Distance in miles
+    ///   - paceName: Name of the pace preset (e.g. "Easy")
+    /// - Returns: Derived name like "5mi Easy" or "13.1mi Tempo"
+    public static func derivedConfigName(distanceMiles: Double, paceName: String) -> String {
+        let distanceLabel: String
+        if distanceMiles == distanceMiles.rounded() {
+            distanceLabel = String(format: "%.0f", distanceMiles)
+        } else {
+            distanceLabel = String(format: "%.1f", distanceMiles)
+        }
+        return "\(distanceLabel)mi \(paceName)"
+    }
+
+    /// Derives a configuration name from multi-segment definition
+    /// - Parameter segments: Array of run segments
+    /// - Returns: Name like "2mi Easy + 5mi Tempo"
+    public static func derivedSegmentConfigName(segments: [RunSegment]) -> String {
+        segments.map { segment in
+            let distLabel: String
+            if segment.distance.miles == segment.distance.miles.rounded() {
+                distLabel = String(format: "%.0f", segment.distance.miles)
+            } else {
+                distLabel = String(format: "%.1f", segment.distance.miles)
+            }
+            return "\(distLabel)mi \(segment.label)"
+        }.joined(separator: " + ")
+    }
+
+    /// Calculates base BPM with an optional stride override
+    public func calculateBaseBPM(for pace: Pace, strideLengthOverride: Double?) -> Int {
+        let stride = strideLengthOverride ?? strideLengthInches
+        let inchesPerMile: Double = 63360.0
+        let stepsPerMile = inchesPerMile / stride
         let paceMinutes = Double(pace.totalSeconds) / 60.0
         let bpm = stepsPerMile / paceMinutes
         return Int(round(bpm))

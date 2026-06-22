@@ -66,11 +66,22 @@ public struct WorkoutState: Equatable {
     /// Increments when runner crosses mile marker
     public var currentMile: Int
 
+    // MARK: - Segment Tracking
+
+    /// Current segment index (0-based) for multi-segment configs
+    public var currentSegmentIndex: Int
+
+    /// Distance (meters) where the current segment began
+    public var segmentDistanceStart: Double
+
     // MARK: - Grace Period
 
     /// Whether workout is still in the initial grace period
     /// During grace period: metronome plays but no pace deviation alerts
     public var isInGracePeriod: Bool
+
+    /// Current heart rate in BPM (nil if no HR data available yet)
+    public var currentHeartRate: Int?
 
     /// When movement was first detected (grace period started)
     public var gracePeriodStartTime: Date?
@@ -114,6 +125,9 @@ public struct WorkoutState: Equatable {
         self.currentMileSplitStartTime = 0.0
         self.mileSplits = []
         self.currentMile = 1
+        self.currentSegmentIndex = 0
+        self.segmentDistanceStart = 0.0
+        self.currentHeartRate = nil
         self.isInGracePeriod = true // Start in grace period
         self.gracePeriodStartTime = nil // Set when movement detected
     }
@@ -144,9 +158,56 @@ public struct WorkoutState: Equatable {
         return distanceCovered / totalMeters
     }
 
-    /// Target pace for current mile
-    /// - Returns: Pace from configuration for current mile number
+    /// Current segment for multi-segment configs
+    public var currentSegment: RunSegment? {
+        guard let segments = configuration.segments,
+              currentSegmentIndex < segments.count else { return nil }
+        return segments[currentSegmentIndex]
+    }
+
+    /// Distance covered within the current segment
+    public var segmentDistanceCovered: Double {
+        distanceCovered - segmentDistanceStart
+    }
+
+    /// Progress within the current segment (0.0 to 1.0)
+    public var segmentProgress: Double {
+        guard let segment = currentSegment else { return 0.0 }
+        guard segment.distance.meters > 0 else { return 0.0 }
+        return segmentDistanceCovered / segment.distance.meters
+    }
+
+    /// Effective pace tolerance — uses segment override if available
+    public var effectivePaceTolerance: Int {
+        currentSegment?.paceTolerance ?? configuration.paceTolerance
+    }
+
+    /// Effective cadence offset — uses segment override if available
+    public var effectiveCadenceOffset: Int {
+        currentSegment?.cadenceOffset ?? configuration.cadenceOffset
+    }
+
+    /// Effective stride length — segment > config > global settings
+    public func effectiveStrideLengthInches(settings: AppSettings) -> Double {
+        currentSegment?.strideLengthInches
+            ?? configuration.strideLengthInches
+            ?? settings.strideLengthInches
+    }
+
+    /// Effective pace calibration — segment > config > global settings
+    public func effectivePaceCalibrationSeconds(settings: AppSettings) -> Int {
+        currentSegment?.paceCalibrationSeconds
+            ?? configuration.paceCalibrationSeconds
+            ?? settings.paceCalibrationSeconds
+    }
+
+    /// Target pace for current mile or segment
+    /// Multi-segment: uses current segment's pace
+    /// Single-segment: uses milePaces array
     public var targetPace: Pace {
+        if let segment = currentSegment {
+            return segment.pace
+        }
         let index = min(currentMile - 1, configuration.milePaces.count - 1)
         return configuration.milePaces[index]
     }
@@ -229,9 +290,11 @@ public struct WorkoutState: Equatable {
     }
 
     /// Converts current state to WorkoutSummary
-    /// - Parameter debugLog: Optional debug log to include with the summary
+    /// - Parameters:
+    ///   - debugLog: Optional debug log to include with the summary
+    ///   - settings: Optional AppSettings snapshot at time of workout
     /// - Returns: Immutable summary of completed workout
-    public func toSummary(debugLog: DebugLog? = nil) -> WorkoutSummary {
+    public func toSummary(debugLog: DebugLog? = nil, settings: AppSettings? = nil) -> WorkoutSummary {
         let endTime = Date()
         let totalDistance = Distance(miles: milesCompleted)
 
@@ -254,7 +317,9 @@ public struct WorkoutState: Equatable {
             totalDistance: totalDistance,
             averagePace: avgPace,
             mileSplits: mileSplits,
-            debugLog: debugLog
+            debugLog: debugLog,
+            configuration: configuration,
+            settings: settings
         )
     }
 }

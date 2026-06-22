@@ -19,11 +19,23 @@ struct ActiveWorkoutView: View {
             }
             .padding(.vertical, 4)
 
+            // Segment label for multi-segment configs
+            if let segment = viewModel.state.currentSegment {
+                Text(segment.label)
+                    .font(.system(size: 11, weight: .semibold))
+                    .foregroundStyle(.purple)
+                    .padding(.horizontal, 6)
+                    .padding(.vertical, 2)
+                    .background(Color.purple.opacity(0.15))
+                    .clipShape(Capsule())
+            }
+
             // Stats row
             HStack(spacing: 8) {
                 statLabel(title: "Target", value: viewModel.state.targetPace.formatted)
                 statLabel(title: "Dist", value: viewModel.formattedDistance())
                 statLabel(title: "Time", value: viewModel.formattedTime())
+                statLabel(title: "HR", value: viewModel.formattedHeartRate())
             }
 
             ProgressView(value: viewModel.state.progress)
@@ -73,7 +85,7 @@ struct ActiveWorkoutView: View {
         // Positive deviation = slower than target, negative = faster
         let deviation = pace.totalSeconds - viewModel.state.targetPace.totalSeconds
         let absDeviation = abs(deviation)
-        let tolerance = viewModel.state.configuration.paceTolerance
+        let tolerance = viewModel.state.effectivePaceTolerance
 
         if absDeviation <= tolerance {
             // On target

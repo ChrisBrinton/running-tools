@@ -20,6 +20,7 @@ struct ConfigurationListView: View {
     @State private var showingNewConfiguration = false
     @State private var configurationToEdit: RunConfiguration?
     @State private var isEditMode = false
+    @State private var showingSyncProgress = false
 
     var body: some View {
         NavigationStack {
@@ -37,43 +38,48 @@ struct ConfigurationListView: View {
                     HStack(spacing: 12) {
                         syncStatusIndicator
                         Button {
-                            store.syncAllConfigurations()
+                            showingSyncProgress = true
+                            store.forceSyncToWatch()
                         } label: {
                             Label("Sync to Watch", systemImage: "arrow.triangle.2.circlepath")
                         }
+                        .disabled(store.syncStatus == .syncing)
                     }
                 }
                 ToolbarItem(placement: .topBarTrailing) {
-                    Menu {
-                        Button {
-                            showingNewConfiguration = true
-                        } label: {
-                            Label("Add New", systemImage: "plus")
-                        }
-
+                    HStack(spacing: 16) {
                         Button {
                             isEditMode.toggle()
                         } label: {
-                            if isEditMode {
-                                Label("Done Editing", systemImage: "checkmark")
-                            } else {
-                                Label("Reorder & Delete", systemImage: "arrow.up.arrow.down")
-                            }
+                            Image(systemName: isEditMode ? "checkmark" : "arrow.up.arrow.down")
+                                .font(.title3)
                         }
-                    } label: {
-                        Image(systemName: "line.3.horizontal")
-                            .font(.title3)
+
+                        Button {
+                            showingNewConfiguration = true
+                        } label: {
+                            Image(systemName: "plus")
+                                .font(.title3)
+                        }
                     }
                 }
             }
             .sheet(isPresented: $showingNewConfiguration) {
-                ConfigurationDetailView(store: store)
+                QuickCreateView(store: store)
             }
             .sheet(item: $configurationToEdit) { configuration in
-                ConfigurationDetailView(
+                ConfigurationSummaryView(
                     store: store,
                     configuration: configuration
                 )
+            }
+            .sheet(isPresented: $showingSyncProgress) {
+                SyncProgressSheet(
+                    configCount: store.configurations.count,
+                    status: store.syncStatus,
+                    onDismiss: { showingSyncProgress = false }
+                )
+                .presentationDetents([.medium])
             }
         }
     }
@@ -146,16 +152,18 @@ struct ConfigurationListView: View {
                     .foregroundStyle(.gray)
             case .activated:
                 Image(systemName: "applewatch")
-                    .foregroundStyle(.green)
+                    .foregroundStyle(.secondary)
             case .syncing:
                 ProgressView()
             case .synced:
                 Image(systemName: "checkmark.applewatch")
                     .foregroundStyle(.green)
-            case .failed(let message):
+            case .queued:
+                Image(systemName: "arrow.clockwise.applewatch")
+                    .foregroundStyle(.orange)
+            case .failed:
                 Image(systemName: "exclamationmark.applewatch")
                     .foregroundStyle(.red)
-                    .help(message)
             }
         }
         .font(.title3)
@@ -180,7 +188,11 @@ struct ConfigurationRow: View {
                 Label(configuration.averagePace().formatted, systemImage: "gauge.with.dots.needle.67percent")
                     .font(.subheadline)
 
-                if configuration.milePaces.count > 1 {
+                if configuration.isMultiSegment, let segments = configuration.segments {
+                    Label("\(segments.count) Segments", systemImage: "square.stack.fill")
+                        .font(.caption)
+                        .foregroundStyle(.purple)
+                } else if configuration.milePaces.count > 1 {
                     // Show if it's a progressive run
                     let firstPace = configuration.milePaces.first!
                     let lastPace = configuration.milePaces.last!
