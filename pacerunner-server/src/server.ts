@@ -6,7 +6,7 @@ import { mountWorkoutIngest } from "./ingest/workout.js";
 import { mountPaceRunnerLogIngest } from "./ingest/pacerunner.js";
 import { mountConfigIngest, mountSettingsIngest } from "./ingest/config_settings.js";
 import { mountRegistration } from "./ingest/register.js";
-import { mountTokenManagement } from "./ingest/tokens.js";
+import { mountTokenManagement, mountPairingCodes } from "./ingest/tokens.js";
 import { mountMCP } from "./mcp/transport.js";
 import { mountOAuth } from "./oauth.js";
 
@@ -37,6 +37,7 @@ mountPaceRunnerLogIngest(app, store);
 mountConfigIngest(app, store);
 mountSettingsIngest(app, store);
 mountTokenManagement(app, store);
+mountPairingCodes(app, store);
 mountMCP(app, store);
 
 const userCount = store.listUsers().length;

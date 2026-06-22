@@ -15,28 +15,36 @@ struct PublisherSettingsView: View {
     @ObservedObject var publisher: HealthKitPublisher = .shared
     @ObservedObject var registration: PublisherRegistration = .shared
 
-    @State private var urlText: String = ""
     @State private var showingResetConfirm = false
     @State private var backfillDays: Int = 90
     @State private var lastBackfillSummary: String?
 
-    // Coach token UI state.
+    // Coach token UI state (Claude Code / CLI tools).
     @State private var coachTokenLabel: String = "Claude Code"
     @State private var generatedCoachToken: String?
     @State private var isGeneratingToken = false
     @State private var coachTokenError: String?
+
+    // Pairing code UI state (Claude Desktop / web).
+    @State private var pairingCode: String?
+    @State private var pairingCodeExpiresAt: Date?
+    @State private var pairingTickNow = Date()
+    @State private var isGeneratingPairing = false
+    @State private var pairingError: String?
     @State private var showingAdvanced = false
 
     var body: some View {
         Form {
             Section("Server") {
-                TextField("https://pacerunner.example.com", text: $urlText)
-                    .keyboardType(.URL)
-                    .autocapitalization(.none)
-                    .disableAutocorrection(true)
-                    .onChange(of: urlText) { _, newValue in
-                        publisher.serverURL = newValue.trimmingCharacters(in: .whitespaces)
-                    }
+                HStack {
+                    Image(systemName: "globe")
+                        .foregroundStyle(.secondary)
+                    Text(publisher.serverURL)
+                        .font(.system(.callout, design: .monospaced))
+                        .lineLimit(1)
+                        .truncationMode(.middle)
+                    Spacer()
+                }
 
                 registerRow
                 statusRow
@@ -77,6 +85,7 @@ struct PublisherSettingsView: View {
                 }
             }
 
+            claudeDesktopSection
             coachAccessSection
 
             Section {
@@ -93,9 +102,6 @@ struct PublisherSettingsView: View {
             }
         }
         .navigationTitle("Home Server")
-        .onAppear {
-            urlText = publisher.serverURL
-        }
         .alert("Reset push history?", isPresented: $showingResetConfirm) {
             Button("Reset", role: .destructive) {
                 publisher.resetPushedHistory()
@@ -110,7 +116,7 @@ struct PublisherSettingsView: View {
 
     @ViewBuilder
     private var registerRow: some View {
-        let canRegister = !urlText.isEmpty && URL(string: urlText) != nil && !isRegistering
+        let canRegister = !isRegistering
         VStack(alignment: .leading, spacing: 6) {
             HStack {
                 Image(systemName: registrationIcon)
@@ -135,8 +141,9 @@ struct PublisherSettingsView: View {
 
             HStack(spacing: 8) {
                 Button {
-                    guard let base = URL(string: urlText) else { return }
-                    Task { await registration.registerForce(serverBaseURL: base) }
+                    Task {
+                        await registration.registerForce(serverBaseURL: PublisherConfig.serverBaseURL)
+                    }
                 } label: {
                     if isRegistering {
                         HStack {
@@ -191,7 +198,134 @@ struct PublisherSettingsView: View {
         }
     }
 
-    // MARK: - Coach access
+    // MARK: - Claude Desktop / web (OAuth via pairing code)
+
+    /// Section that helps the user connect Claude Desktop / web (or any
+    /// OAuth-only MCP client) by issuing a short-lived numeric pairing
+    /// code. The user pastes the MCP URL into Claude, Claude opens the
+    /// server's `/authorize` page in a browser, and the user types the
+    /// code there to bind the OAuth session to their account on the server.
+    @ViewBuilder
+    private var claudeDesktopSection: some View {
+        if publisher.isConfigured && registration.state == .registered {
+            Section {
+                Text("Use this for Claude Desktop, Claude on the web, or any MCP client that requires OAuth.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+
+                // MCP endpoint URL — copyable
+                HStack {
+                    Text("MCP URL")
+                        .font(.caption.weight(.semibold))
+                    Spacer()
+                    Button {
+                        UIPasteboard.general.string = mcpURL
+                    } label: {
+                        Label("Copy", systemImage: "doc.on.doc")
+                            .labelStyle(.iconOnly)
+                    }
+                    .buttonStyle(.borderless)
+                }
+                Text(mcpURL)
+                    .font(.system(.caption, design: .monospaced))
+                    .textSelection(.enabled)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(8)
+                    .background(Color.secondary.opacity(0.12), in: RoundedRectangle(cornerRadius: 6))
+
+                Button {
+                    Task { await generatePairingCode() }
+                } label: {
+                    HStack {
+                        if isGeneratingPairing {
+                            ProgressView()
+                            Text("Generating…")
+                        } else {
+                            Label("Generate pairing code", systemImage: "qrcode")
+                        }
+                    }
+                }
+                .disabled(isGeneratingPairing)
+
+                if let err = pairingError {
+                    Text(err)
+                        .font(.caption)
+                        .foregroundStyle(.red)
+                }
+
+                if let code = pairingCode {
+                    pairingCodeDisplay(code: code)
+                }
+            } header: {
+                Text("Connect Claude Desktop / web")
+            } footer: {
+                Text("Paste the MCP URL into Claude's MCP server settings. When Claude opens the approval page, enter the pairing code.")
+            }
+        }
+    }
+
+    @ViewBuilder
+    private func pairingCodeDisplay(code: String) -> some View {
+        let remaining = pairingCodeExpiresAt.map {
+            max(0, Int($0.timeIntervalSince(pairingTickNow)))
+        } ?? 0
+        let expired = remaining == 0
+
+        VStack(alignment: .leading, spacing: 8) {
+            Label(expired ? "Expired" : "Enter on Claude's approval page",
+                  systemImage: expired ? "xmark.circle.fill" : "key.horizontal.fill")
+                .foregroundStyle(expired ? .red : .blue)
+                .font(.caption.weight(.semibold))
+
+            Text(code)
+                .font(.system(size: 36, weight: .bold, design: .monospaced))
+                .kerning(6)
+                .frame(maxWidth: .infinity, alignment: .center)
+                .padding(.vertical, 8)
+                .foregroundStyle(expired ? .secondary : .primary)
+                .background(Color.secondary.opacity(0.10), in: RoundedRectangle(cornerRadius: 8))
+
+            HStack {
+                if !expired {
+                    Text("Expires in \(remaining)s")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+                Spacer()
+                Button("Copy") { UIPasteboard.general.string = code }
+                    .buttonStyle(.bordered)
+                Button("Dismiss") {
+                    pairingCode = nil
+                    pairingCodeExpiresAt = nil
+                }
+                .buttonStyle(.borderless)
+            }
+        }
+        .onReceive(Timer.publish(every: 1, on: .main, in: .common).autoconnect()) { now in
+            pairingTickNow = now
+        }
+    }
+
+    private var mcpURL: String {
+        let url = publisher.serverURL.trimmingCharacters(in: .whitespaces)
+        return url.hasSuffix("/") ? "\(url)mcp" : "\(url)/mcp"
+    }
+
+    private func generatePairingCode() async {
+        pairingError = nil
+        isGeneratingPairing = true
+        defer { isGeneratingPairing = false }
+        do {
+            let result = try await publisher.createPairingCode()
+            pairingCode = result.code
+            pairingCodeExpiresAt = result.expiresAt
+            pairingTickNow = Date()
+        } catch {
+            pairingError = error.localizedDescription
+        }
+    }
+
+    // MARK: - Coach access (bearer token, for Claude Code / CLI)
 
     /// Section that mints + displays an MCP-scoped token for an AI chat
     /// session. Visible only when the device is registered (we need a
@@ -232,9 +366,9 @@ struct PublisherSettingsView: View {
                     coachTokenDisplay(token)
                 }
             } header: {
-                Text("Coach access")
+                Text("Connect Claude Code / CLI tools")
             } footer: {
-                Text("Tokens only grant read access (cannot push or modify data). Tokens you no longer need can be revoked via the admin CLI on the server.")
+                Text("Use this for Claude Code (CLI), scripts, or any tool that accepts a static bearer token. Tokens grant read-only access to your data and can be revoked via the admin CLI on the server.")
             }
         }
     }

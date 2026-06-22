@@ -307,6 +307,48 @@ final class HealthKitPublisher: ObservableObject {
         return decoded.token
     }
 
+    /// Result of `createPairingCode` — pairs the 6-digit code with its TTL
+    /// so the UI can display a countdown.
+    struct PairingCodeResult {
+        let code: String
+        let expiresAt: Date
+    }
+
+    /// Calls `POST /ingest/pairing-codes` to mint a short-lived numeric
+    /// code that the user types on the OAuth `/authorize` approval page,
+    /// binding the resulting Claude Desktop / web session to THIS user.
+    func createPairingCode() async throws -> PairingCodeResult {
+        guard isConfigured else { throw PushError.notConfigured }
+        guard let base = URL(string: serverURL),
+              let url = URL(string: "/ingest/pairing-codes", relativeTo: base) else {
+            throw PushError.notConfigured
+        }
+        var req = URLRequest(url: url)
+        req.httpMethod = "POST"
+        req.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        req.setValue("Bearer \(ingestToken)", forHTTPHeaderField: "Authorization")
+        req.httpBody = try JSONSerialization.data(withJSONObject: [String: Any]())
+        req.timeoutInterval = 30
+
+        let (data, resp) = try await URLSession.shared.data(for: req)
+        guard let http = resp as? HTTPURLResponse else {
+            throw PushError.http(0, "non-HTTP response")
+        }
+        if http.statusCode == 401 || http.statusCode == 403 { throw PushError.unauthorized }
+        if !(200...299).contains(http.statusCode) {
+            throw PushError.http(http.statusCode, String(data: data, encoding: .utf8) ?? "")
+        }
+        struct Response: Decodable {
+            let code: String
+            let expires_in_seconds: Int
+        }
+        let decoded = try JSONDecoder().decode(Response.self, from: data)
+        return PairingCodeResult(
+            code: decoded.code,
+            expiresAt: Date().addingTimeInterval(TimeInterval(decoded.expires_in_seconds))
+        )
+    }
+
     // MARK: - Push primitives
 
     private enum PushError: LocalizedError {

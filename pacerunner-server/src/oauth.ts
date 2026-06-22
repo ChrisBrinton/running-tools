@@ -53,7 +53,11 @@ function approvalHtml(params: {
   state: string;
   codeChallenge: string;
   codeChallengeMethod: string;
+  errorMessage?: string;
 }): string {
+  const errBlock = params.errorMessage
+    ? `<p class="err">${esc(params.errorMessage)}</p>`
+    : "";
   return `<!DOCTYPE html>
 <html lang="en">
 <head>
@@ -65,8 +69,13 @@ function approvalHtml(params: {
   .card{background:#fff;border-radius:12px;padding:32px;box-shadow:0 2px 12px rgba(0,0,0,.08)}
   h1{font-size:1.25rem;margin:0 0 8px}
   .label{font-size:1rem;font-weight:600;margin:0 0 4px}
-  .id{font-size:.8rem;color:#888;font-family:monospace;margin:0 0 28px;word-break:break-all}
-  .scope{font-size:.9rem;color:#444;margin:0 0 28px;line-height:1.5}
+  .id{font-size:.8rem;color:#888;font-family:monospace;margin:0 0 24px;word-break:break-all}
+  .scope{font-size:.9rem;color:#444;margin:0 0 20px;line-height:1.5}
+  .field-label{display:block;font-size:.9rem;font-weight:600;margin:0 0 6px;color:#222}
+  .hint{font-size:.8rem;color:#666;margin:4px 0 16px;line-height:1.4}
+  input[type=text]{width:100%;box-sizing:border-box;font-size:1.6rem;font-family:ui-monospace,SFMono-Regular,Menlo,monospace;text-align:center;letter-spacing:.4rem;padding:14px;border:1px solid #ccc;border-radius:8px;margin:0 0 20px}
+  input[type=text]:focus{outline:none;border-color:#0066cc;box-shadow:0 0 0 3px rgba(0,102,204,.15)}
+  .err{background:#fee;color:#a00;padding:10px 12px;border-radius:6px;font-size:.9rem;margin:0 0 16px}
   button{background:#0066cc;color:#fff;border:none;padding:12px 0;border-radius:8px;font-size:1rem;cursor:pointer;width:100%;font-weight:500}
   button:hover{background:#0055aa}
   .deny{display:block;text-align:center;margin-top:12px;font-size:.85rem;color:#888;text-decoration:none}
@@ -79,7 +88,11 @@ function approvalHtml(params: {
   <p class="label">${esc(params.label)}</p>
   <p class="id">${esc(params.clientId)}</p>
   <p class="scope">Read-only access to your PaceRunner workout data, configurations, and settings.</p>
+  ${errBlock}
   <form method="POST">
+    <label class="field-label" for="pcode">Pairing code</label>
+    <p class="hint">Generate a code in the PaceRunner app (Settings → Home Server → Connect a coach) and type it here. The code expires after 10 minutes.</p>
+    <input type="text" id="pcode" name="pairing_code" inputmode="numeric" pattern="[0-9]{6}" maxlength="6" autocomplete="one-time-code" required autofocus>
     <input type="hidden" name="client_id" value="${esc(params.clientId)}">
     <input type="hidden" name="redirect_uri" value="${esc(params.redirectUri)}">
     <input type="hidden" name="state" value="${esc(params.state)}">
@@ -137,11 +150,12 @@ export function mountOAuth(app: Hono, store: Store) {
     const clientId = "pr_" + randomBytes(12).toString("hex");
     const secret = randomBytes(32).toString("hex");
 
-    // Associate with the first user on a single-user server
-    const users = store.listUsers();
-    const userId = users.length > 0 ? users[0].id : null;
-
-    store.createOAuthClient(clientId, hashOAuthSecret(secret), userId, label, redirectUris);
+    // Don't associate a client with any user at registration time. The
+    // user binding happens at /authorize via the pairing-code handshake.
+    // This is what makes multi-user OAuth work — different users can
+    // independently approve the same client, each getting auth codes
+    // scoped to their own data.
+    store.createOAuthClient(clientId, hashOAuthSecret(secret), null, label, redirectUris);
 
     return c.json({
       client_id: clientId,
@@ -186,7 +200,11 @@ export function mountOAuth(app: Hono, store: Store) {
     }));
   });
 
-  // Authorization endpoint — process approval
+  // Authorization endpoint — process approval. Now requires a pairing
+  // code so the resulting auth code is bound to a specific user (instead
+  // of silently defaulting to users[0]). The pairing code is created via
+  // POST /ingest/pairing-codes from the phone and entered by the user
+  // on the approval HTML.
   app.post("/authorize", async (c) => {
     const body = await c.req.parseBody();
     const clientId = body.client_id as string | undefined;
@@ -194,6 +212,8 @@ export function mountOAuth(app: Hono, store: Store) {
     const state = (body.state as string | undefined) ?? "";
     const codeChallenge = (body.code_challenge as string | undefined) || null;
     const codeChallengeMethod = (body.code_challenge_method as string | undefined) || null;
+    const pairingCodeRaw = (body.pairing_code as string | undefined) ?? "";
+    const pairingCode = pairingCodeRaw.replace(/\D/g, ""); // strip whitespace / dashes
 
     if (!clientId || !redirectUri) return c.text("invalid_request", 400);
 
@@ -203,11 +223,41 @@ export function mountOAuth(app: Hono, store: Store) {
     const allowed = JSON.parse(client.redirect_uris) as string[];
     if (!redirectUriAllowed(allowed, redirectUri)) return c.text("invalid_request", 400);
 
-    const users = store.listUsers();
-    if (users.length === 0) return c.text("server_error: no users configured", 500);
-    const userId = users[0].id;
+    // The form posts a pairing code from the user's phone. Without it,
+    // we re-render the approval page with an error rather than silently
+    // proceeding with users[0] — that auto-pick broke multi-user setups.
+    if (!pairingCode || pairingCode.length < 4) {
+      return c.html(approvalHtml({
+        clientId,
+        label: client.label ?? clientId,
+        redirectUri,
+        state,
+        codeChallenge: codeChallenge ?? "",
+        codeChallengeMethod: codeChallengeMethod ?? "S256",
+        errorMessage: "Enter the 6-digit pairing code from the PaceRunner app.",
+      }), 400);
+    }
 
-    const code = store.createOAuthCode(clientId, userId, redirectUri, codeChallenge, codeChallengeMethod);
+    const pairing = store.consumePairingCode(pairingCode, clientId);
+    if (!pairing) {
+      return c.html(approvalHtml({
+        clientId,
+        label: client.label ?? clientId,
+        redirectUri,
+        state,
+        codeChallenge: codeChallenge ?? "",
+        codeChallengeMethod: codeChallengeMethod ?? "S256",
+        errorMessage: "Pairing code invalid, expired, or already used. Generate a new one in the PaceRunner app and try again.",
+      }), 401);
+    }
+
+    const code = store.createOAuthCode(
+      clientId, pairing.user_id, redirectUri, codeChallenge, codeChallengeMethod
+    );
+
+    console.log(
+      `[oauth] /authorize approved client=${clientId} → user_id=${pairing.user_id} via pairing code ${pairingCode.slice(0, 2)}…${pairingCode.slice(-2)}`
+    );
 
     const url = new URL(redirectUri);
     url.searchParams.set("code", code);

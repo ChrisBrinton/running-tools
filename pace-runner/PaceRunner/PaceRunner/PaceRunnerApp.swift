@@ -36,7 +36,13 @@ struct PaceRunnerApp: App {
         // Eager-init the publisher so its `didBecomeActive` observer is wired
         // before the first foreground transition. publishAll on launch is
         // gated by isConfigured, so this is safe even for fresh installs.
-        _ = HealthKitPublisher.shared
+        // Also: bake in the home-server URL from Info.plist so users don't
+        // need to type it — they just register and connect.
+        let publisher = HealthKitPublisher.shared
+        let buildURL = PublisherConfig.serverBaseURL.absoluteString
+        if publisher.serverURL != buildURL {
+            publisher.serverURL = buildURL
+        }
 
         // Workout manager for iPhone-side workouts (no HKWorkoutSession on iOS,
         // background location/audio modes keep the app alive)

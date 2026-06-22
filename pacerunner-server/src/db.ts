@@ -105,6 +105,15 @@ export interface RegisterChallengeRow {
   used: number;
 }
 
+export interface PairingCodeRow {
+  code: string;
+  user_id: number;
+  expires_at: string;
+  used: number;
+  used_by_client_id: string | null;
+  used_at: string | null;
+}
+
 export interface WorkoutSplitRow {
   workout_id: string;
   split_number: number;
@@ -351,6 +360,22 @@ export class Store {
         expires_at TEXT NOT NULL,
         used INTEGER NOT NULL DEFAULT 0
       );
+
+      -- Short-lived pairing codes for OAuth user binding. Phone generates
+      -- one of these via /ingest/pairing-codes; user types it on the
+      -- /authorize approval page so the resulting OAuth code is bound to
+      -- THAT phone's user (rather than defaulting to users[0]). Single use,
+      -- 10 min TTL. Decouples Claude Desktop's dynamic client registration
+      -- from user identification in a multi-user world.
+      CREATE TABLE IF NOT EXISTS pairing_codes (
+        code TEXT PRIMARY KEY,
+        user_id INTEGER NOT NULL,
+        expires_at TEXT NOT NULL,
+        used INTEGER NOT NULL DEFAULT 0,
+        used_by_client_id TEXT,
+        used_at TEXT,
+        FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+      );
     `);
 
     // Additive column migrations — safe to re-run; ALTER TABLE ADD COLUMN
@@ -478,6 +503,41 @@ export class Store {
     this.db.prepare(
       "UPDATE device_registrations SET attest_counter = ? WHERE install_id = ?"
     ).run(counter, installID);
+  }
+
+  // ---------------------------------------------------------------------
+  // OAuth pairing codes (phone-to-coach handshake)
+  // ---------------------------------------------------------------------
+
+  createPairingCode(code: string, userID: number, ttlSeconds: number): void {
+    const expires = new Date(Date.now() + ttlSeconds * 1000).toISOString();
+    this.db.prepare(`
+      INSERT INTO pairing_codes (code, user_id, expires_at, used)
+      VALUES (?, ?, ?, 0)
+    `).run(code, userID, expires);
+  }
+
+  /** Consume a pairing code. Returns the row if valid/unused/unexpired; marks
+   *  the code consumed atomically. Returns undefined for any invalid case
+   *  without distinguishing why (don't leak which codes exist). */
+  consumePairingCode(code: string, clientID: string): PairingCodeRow | undefined {
+    const row = this.db.prepare(
+      "SELECT * FROM pairing_codes WHERE code = ?"
+    ).get(code) as PairingCodeRow | undefined;
+    if (!row) return undefined;
+    if (row.used) return undefined;
+    if (new Date(row.expires_at).getTime() < Date.now()) return undefined;
+    this.db.prepare(
+      "UPDATE pairing_codes SET used = 1, used_by_client_id = ?, used_at = ? WHERE code = ?"
+    ).run(clientID, new Date().toISOString(), code);
+    return row;
+  }
+
+  purgeExpiredPairingCodes(): number {
+    const info = this.db.prepare(
+      "DELETE FROM pairing_codes WHERE expires_at < ?"
+    ).run(new Date().toISOString());
+    return info.changes;
   }
 
   // ---------------------------------------------------------------------

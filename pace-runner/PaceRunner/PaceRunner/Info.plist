@@ -13,5 +13,10 @@
 	<array>
 		<string>_mcp._tcp</string>
 	</array>
+	<!-- Build-baked URL of the always-on PaceRunner server. Users don't
+	     configure this; they just register and connect. Override in
+	     debug builds via a custom build configuration if needed. -->
+	<key>PaceRunnerServerURL</key>
+	<string>https://pacerunner.brintontech.com</string>
 </dict>
 </plist>
