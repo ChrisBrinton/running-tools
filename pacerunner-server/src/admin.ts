@@ -1,5 +1,6 @@
 import { randomBytes } from "node:crypto";
 import { Store, type TokenScope } from "./db.js";
+import { hashOAuthSecret } from "./oauth.js";
 
 /**
  * Admin CLI. Run via `npm run admin -- <command> [...flags]`.
@@ -22,7 +23,11 @@ Usage:
   npm run admin -- list-tokens [--user-id <id>]
   npm run admin -- revoke-token --token <token>
 
-The token value is shown ONCE on creation — copy it immediately.
+  npm run admin -- create-oauth-client --user-id <id> --label <label>
+  npm run admin -- list-oauth-clients [--user-id <id>]
+  npm run admin -- delete-oauth-client --client-id <id>
+
+The token/secret value is shown ONCE on creation — copy it immediately.
 `);
   process.exit(1);
 }
@@ -114,6 +119,40 @@ function main() {
       const token = arg("token", rest)!;
       const ok = store.revokeToken(token);
       console.log(ok ? "Revoked." : "No matching token.");
+      return;
+    }
+    case "create-oauth-client": {
+      const userID = Number(arg("user-id", rest)!);
+      const label = arg("label", rest)!;
+      if (!store.getUser(userID)) {
+        console.error(`user #${userID} not found`);
+        process.exit(1);
+      }
+      const clientId = "pr_" + randomBytes(12).toString("hex");
+      const secret = randomBytes(32).toString("hex");
+      store.createOAuthClient(clientId, hashOAuthSecret(secret), userID, label, ["*"]);
+      console.log(`\nOAuth client created (copy the secret — it won't be shown again):\n`);
+      console.log(`  client_id:     ${clientId}`);
+      console.log(`  client_secret: ${secret}\n`);
+      console.log(`  user_id: ${userID}`);
+      console.log(`  label:   ${label}`);
+      console.log(`  redirect_uris: any (["*"])`);
+      return;
+    }
+    case "list-oauth-clients": {
+      const uidStr = arg("user-id", rest, false);
+      const uid = uidStr ? Number(uidStr) : undefined;
+      const rows = store.listOAuthClients(uid);
+      if (rows.length === 0) { console.log("(no oauth clients)"); return; }
+      for (const r of rows) {
+        console.log(`${r.client_id}\tuser=${r.user_id ?? "-"}\t${r.label ?? "-"}\tcreated ${r.created_at}`);
+      }
+      return;
+    }
+    case "delete-oauth-client": {
+      const clientId = arg("client-id", rest)!;
+      const ok = store.deleteOAuthClient(clientId);
+      console.log(ok ? "Deleted." : "No matching client.");
       return;
     }
     default:

@@ -6,6 +6,7 @@ import { mountWorkoutIngest } from "./ingest/workout.js";
 import { mountPaceRunnerLogIngest } from "./ingest/pacerunner.js";
 import { mountConfigIngest, mountSettingsIngest } from "./ingest/config_settings.js";
 import { mountMCP } from "./mcp/transport.js";
+import { mountOAuth } from "./oauth.js";
 
 const DATA_DIR = process.env.PACERUNNER_DATA_DIR ?? "./data";
 const PORT = Number(process.env.PORT ?? 8080);
@@ -23,6 +24,7 @@ app.get("/health", (c) => c.json({ ok: true }));
 app.use("/ingest/*", requireScope(store, "ingest"));
 app.use("/mcp", requireScope(store, "mcp"));
 
+mountOAuth(app, store);
 mountWorkoutIngest(app, store);
 mountPaceRunnerLogIngest(app, store);
 mountConfigIngest(app, store);

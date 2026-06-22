@@ -25,18 +25,27 @@ declare module "hono" {
   }
 }
 
+function wwwAuthenticate(): string {
+  const base = (process.env.PACERUNNER_BASE_URL ?? "").replace(/\/$/, "");
+  return `Bearer realm="${base}"`;
+}
+
 export function requireScope(store: Store, required: TokenScope | TokenScope[]): MiddlewareHandler {
   const allowed = Array.isArray(required) ? required : [required];
   return async (c, next) => {
     const header = c.req.header("Authorization") ?? "";
     if (!header.startsWith("Bearer ")) {
-      return c.json({ error: "Missing bearer token" }, 401);
+      return c.json({ error: "Missing bearer token" }, 401, {
+        "WWW-Authenticate": wwwAuthenticate(),
+      });
     }
     const token = header.slice("Bearer ".length).trim();
     const row = store.lookupToken(token);
     if (!row) {
       // Indistinguishable from "scope wrong" on purpose; 401 in both cases.
-      return c.json({ error: "Invalid or revoked token" }, 401);
+      return c.json({ error: "Invalid or revoked token" }, 401, {
+        "WWW-Authenticate": wwwAuthenticate(),
+      });
     }
     // Admin tokens implicitly satisfy any narrower scope. That keeps the
     // CLI / future admin HTTP surface able to call ingest/MCP endpoints

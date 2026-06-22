@@ -1,5 +1,6 @@
 import Database from "better-sqlite3";
 import { mkdirSync } from "node:fs";
+import { randomBytes } from "node:crypto";
 import path from "node:path";
 
 /**
@@ -37,6 +38,26 @@ export interface TokenRow {
   created_at: string;
   last_used_at: string | null;
   revoked: number;
+}
+
+export interface OAuthClientRow {
+  client_id: string;
+  client_secret_hash: string;
+  user_id: number | null;
+  label: string | null;
+  redirect_uris: string; // JSON-encoded string[]; ["*"] means allow any
+  created_at: string;
+}
+
+export interface OAuthCodeRow {
+  code: string;
+  client_id: string;
+  user_id: number;
+  redirect_uri: string;
+  code_challenge: string | null;
+  code_challenge_method: string | null;
+  expires_at: string;
+  used: number;
 }
 
 export interface WorkoutRow {
@@ -224,6 +245,26 @@ export class Store {
       );
       CREATE INDEX IF NOT EXISTS idx_settings_user
         ON settings_snapshots(user_id, taken_at);
+
+      CREATE TABLE IF NOT EXISTS oauth_clients (
+        client_id TEXT PRIMARY KEY,
+        client_secret_hash TEXT NOT NULL,
+        user_id INTEGER,
+        label TEXT,
+        redirect_uris TEXT NOT NULL DEFAULT '[]',
+        created_at TEXT NOT NULL
+      );
+
+      CREATE TABLE IF NOT EXISTS oauth_codes (
+        code TEXT PRIMARY KEY,
+        client_id TEXT NOT NULL,
+        user_id INTEGER NOT NULL,
+        redirect_uri TEXT NOT NULL,
+        code_challenge TEXT,
+        code_challenge_method TEXT,
+        expires_at TEXT NOT NULL,
+        used INTEGER NOT NULL DEFAULT 0
+      );
     `);
   }
 
@@ -281,6 +322,81 @@ export class Store {
     return this.db.prepare(
       "SELECT * FROM user_tokens ORDER BY user_id, created_at DESC"
     ).all() as TokenRow[];
+  }
+
+  // ---------------------------------------------------------------------
+  // OAuth2 clients
+  // ---------------------------------------------------------------------
+
+  createOAuthClient(
+    clientId: string,
+    secretHash: string,
+    userId: number | null,
+    label: string | null,
+    redirectUris: string[],
+  ): void {
+    this.db.prepare(`
+      INSERT INTO oauth_clients (client_id, client_secret_hash, user_id, label, redirect_uris, created_at)
+      VALUES (?, ?, ?, ?, ?, ?)
+    `).run(clientId, secretHash, userId, label, JSON.stringify(redirectUris), new Date().toISOString());
+  }
+
+  getOAuthClient(clientId: string): OAuthClientRow | undefined {
+    return this.db.prepare(
+      "SELECT * FROM oauth_clients WHERE client_id = ?"
+    ).get(clientId) as OAuthClientRow | undefined;
+  }
+
+  listOAuthClients(userId?: number): OAuthClientRow[] {
+    if (userId !== undefined) {
+      return this.db.prepare(
+        "SELECT * FROM oauth_clients WHERE user_id = ? ORDER BY created_at DESC"
+      ).all(userId) as OAuthClientRow[];
+    }
+    return this.db.prepare(
+      "SELECT * FROM oauth_clients ORDER BY created_at DESC"
+    ).all() as OAuthClientRow[];
+  }
+
+  deleteOAuthClient(clientId: string): boolean {
+    return this.db.prepare(
+      "DELETE FROM oauth_clients WHERE client_id = ?"
+    ).run(clientId).changes > 0;
+  }
+
+  // ---------------------------------------------------------------------
+  // OAuth2 authorization codes
+  // ---------------------------------------------------------------------
+
+  createOAuthCode(
+    clientId: string,
+    userId: number,
+    redirectUri: string,
+    codeChallenge: string | null,
+    codeChallengeMethod: string | null,
+  ): string {
+    const code = randomBytes(32).toString("hex");
+    const expiresAt = new Date(Date.now() + 5 * 60 * 1000).toISOString();
+    this.db.prepare(`
+      INSERT INTO oauth_codes
+        (code, client_id, user_id, redirect_uri, code_challenge, code_challenge_method, expires_at, used)
+      VALUES (?, ?, ?, ?, ?, ?, ?, 0)
+    `).run(code, clientId, userId, redirectUri, codeChallenge, codeChallengeMethod, expiresAt);
+    return code;
+  }
+
+  getAndConsumeOAuthCode(code: string, clientId: string, redirectUri: string): OAuthCodeRow | null {
+    return (this.db.transaction((): OAuthCodeRow | null => {
+      const row = this.db.prepare(
+        "SELECT * FROM oauth_codes WHERE code = ? AND used = 0"
+      ).get(code) as OAuthCodeRow | undefined;
+      if (!row) return null;
+      if (row.client_id !== clientId) return null;
+      if (row.redirect_uri !== redirectUri) return null;
+      if (new Date(row.expires_at) < new Date()) return null;
+      this.db.prepare("UPDATE oauth_codes SET used = 1 WHERE code = ?").run(code);
+      return row;
+    }))();
   }
 
   // ---------------------------------------------------------------------
