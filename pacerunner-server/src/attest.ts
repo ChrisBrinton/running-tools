@@ -116,13 +116,28 @@ export function verifyAttestation(
   }
 
   // -------- Step 3: nonce extension matches SHA256(authData||clientDataHash)
+  // Buffer.concat handles Uint8Arrays from CBOR-x decode correctly, but force
+  // both arguments through Buffer.from so any future cbor-x type changes
+  // don't silently corrupt the concatenation.
+  const authDataBuf = Buffer.from(authData);
   const clientDataHash = sha256(Buffer.from(challenge, "utf-8"));
-  const expectedNonce = sha256(Buffer.concat([authData, clientDataHash]));
+  const expectedNonce = sha256(Buffer.concat([authDataBuf, clientDataHash]));
   const certNonce = extractNonceExtension(leaf);
   if (!certNonce) {
+    // Dump the part of the DER right after the OID so we can diagnose what
+    // shape Apple actually shipped if the walker doesn't match.
+    const dump = leaf.raw.slice(0, Math.min(leaf.raw.length, 1024)).toString("hex");
+    console.warn(`[attest] step-3 ext-missing — challenge="${challenge}" authDataLen=${authDataBuf.length} certDerHead=${dump.slice(0, 256)}…`);
     throw new AttestationError("Leaf cert missing nonce extension", "3.ext-missing");
   }
   if (!certNonce.equals(expectedNonce)) {
+    console.warn(
+      `[attest] step-3 nonce mismatch — challenge="${challenge}" ` +
+      `authDataLen=${authDataBuf.length} ` +
+      `clientDataHash=${clientDataHash.toString("hex")} ` +
+      `cert=${certNonce.toString("hex")} ` +
+      `expected=${expectedNonce.toString("hex")}`
+    );
     throw new AttestationError(
       `Nonce mismatch (cert ${certNonce.toString("hex")} vs computed ${expectedNonce.toString("hex")})`,
       "3.nonce"
@@ -270,27 +285,97 @@ function parseAuthData(authData: Buffer): ParsedAuthData {
 }
 
 /**
- * Pull the bytes out of the leaf cert's nonce extension (OID 1.2.840.113635.100.8.2).
+ * Pull the 32-byte nonce out of the leaf cert's Apple App Attest extension
+ * (OID 1.2.840.113635.100.8.2).
  *
- * Apple wraps the 32-byte nonce in an ASN.1 sequence: `SEQUENCE { [1] EXPLICIT OCTET STRING }`,
- * so we walk the DER manually rather than pulling in a full ASN.1 library.
+ * The X.509 extension structure is:
+ *   SEQUENCE {
+ *     OID 1.2.840.113635.100.8.2
+ *     [BOOLEAN critical]              -- optional
+ *     OCTET STRING {                  -- extnValue wrapper
+ *       SEQUENCE {
+ *         [1] OCTET STRING <nonce>    -- explicit context tag, 32 bytes
+ *       }
+ *     }
+ *   }
+ *
+ * Rather than pattern-match raw bytes (fragile — the previous version was
+ * fooled by length-encoding edge cases), we walk the DER properly:
+ *   1. Find the OID in the cert.
+ *   2. Skip the optional BOOLEAN.
+ *   3. Read the wrapping OCTET STRING's length.
+ *   4. Recurse into SEQUENCE/SET/context-tag-constructed children, returning
+ *      the first OCTET STRING of length 32 we find.
  */
 function extractNonceExtension(cert: X509Certificate): Buffer | null {
-  // Node's X509Certificate doesn't expose extensions directly, but the raw
-  // DER is available via `cert.raw`. Search the DER for the OID and then
-  // walk forward to the OCTET STRING.
   const der = cert.raw;
-  // OID 1.2.840.113635.100.8.2 encoded in DER: 06 0a 2a 86 48 86 f7 63 64 08 02
+  // OID 1.2.840.113635.100.8.2 in DER: 06 0a 2a 86 48 86 f7 63 64 08 02
   const oidPattern = Buffer.from([0x06, 0x0a, 0x2a, 0x86, 0x48, 0x86, 0xf7, 0x63, 0x64, 0x08, 0x02]);
-  const idx = der.indexOf(oidPattern);
-  if (idx < 0) return null;
-  // Skip OID, then expect: <SEQUENCE | OCTET STRING wrapping> ... <OCTET STRING> 0x20 <32 bytes>
-  // Cheapest reliable extraction: scan forward for `0x04 0x20` (OCTET STRING, length 32) and
-  // take the following 32 bytes. The nonce is always 32 bytes (SHA-256 output).
-  for (let i = idx + oidPattern.length; i < der.length - 33; i++) {
-    if (der[i] === 0x04 && der[i + 1] === 0x20) {
-      return Buffer.from(der.subarray(i + 2, i + 2 + 32));
+  const oidIdx = der.indexOf(oidPattern);
+  if (oidIdx < 0) return null;
+
+  let p = oidIdx + oidPattern.length;
+
+  // Skip optional BOOLEAN critical flag (`0x01 0x01 0xFF`).
+  if (p + 2 < der.length && der[p] === 0x01 && der[p + 1] === 0x01) {
+    p += 3;
+  }
+
+  // Expect the wrapping OCTET STRING (tag 0x04).
+  if (p >= der.length || der[p] !== 0x04) return null;
+  p++;
+  const wrap = readDerLength(der, p);
+  if (wrap.length === null) return null;
+  p += wrap.headerLen;
+  const end = p + wrap.length;
+  if (end > der.length) return null;
+
+  return findOctetStringOfLength(der, p, end, 32);
+}
+
+/** DER length parser. Handles short-form and long-form (up to 4 length bytes,
+ *  which is plenty — no certificate field is over 16MB). Returns null length
+ *  if the encoding is malformed. */
+function readDerLength(buf: Buffer, offset: number): { length: number | null; headerLen: number } {
+  if (offset >= buf.length) return { length: null, headerLen: 0 };
+  const first = buf[offset];
+  if (first < 0x80) return { length: first, headerLen: 1 };
+  const numBytes = first & 0x7f;
+  if (numBytes === 0 || numBytes > 4) return { length: null, headerLen: 0 };
+  if (offset + 1 + numBytes > buf.length) return { length: null, headerLen: 0 };
+  let len = 0;
+  for (let i = 0; i < numBytes; i++) {
+    len = (len << 8) | buf[offset + 1 + i];
+  }
+  return { length: len, headerLen: 1 + numBytes };
+}
+
+/** Walks a DER region, descending into SEQUENCE / SET / context-tag-constructed
+ *  containers, and returns the bytes of the first OCTET STRING (tag 0x04) of
+ *  exactly the requested length. */
+function findOctetStringOfLength(
+  buf: Buffer, start: number, end: number, expectedLen: number
+): Buffer | null {
+  let p = start;
+  while (p < end - 1) {
+    const tag = buf[p];
+    const lenInfo = readDerLength(buf, p + 1);
+    if (lenInfo.length === null) return null;
+    const contentStart = p + 1 + lenInfo.headerLen;
+    const contentEnd = contentStart + lenInfo.length;
+    if (contentEnd > end) return null;
+
+    // OCTET STRING — check length match.
+    if (tag === 0x04 && lenInfo.length === expectedLen) {
+      return Buffer.from(buf.subarray(contentStart, contentEnd));
     }
+    // Constructed containers (SEQUENCE 0x30, SET 0x31, any constructed context tag 0xA0..0xBF).
+    const isConstructed = tag === 0x30 || tag === 0x31 || (tag & 0xe0) === 0xa0;
+    if (isConstructed) {
+      const found = findOctetStringOfLength(buf, contentStart, contentEnd, expectedLen);
+      if (found) return found;
+    }
+    p = contentEnd;
   }
   return null;
 }
