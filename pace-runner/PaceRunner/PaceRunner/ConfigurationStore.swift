@@ -163,6 +163,12 @@ class ConfigurationStore: ObservableObject {
         if let data = try? encoder.encode(configurations) {
             UserDefaults.standard.set(data, forKey: Self.storageKey)
         }
+        // Mirror to the home server. Cheap (small JSON) and only fires
+        // when the publisher is configured.
+        let snapshot = configurations
+        Task { @MainActor in
+            await HealthKitPublisher.shared.publishConfigurations(snapshot)
+        }
     }
 
     private func handleSyncedConfiguration(_ configuration: RunConfiguration) {

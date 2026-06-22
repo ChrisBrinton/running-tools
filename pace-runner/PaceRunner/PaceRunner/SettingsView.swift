@@ -20,6 +20,9 @@ struct SettingsView: View {
     @State private var debugExportItem: DebugExportItem?
     @State private var mapExportItem: MapExportItem?
 
+    // Live publisher state for the Home Server row in this view.
+    @ObservedObject private var publisher: HealthKitPublisher = .shared
+
     // Multi-step async flow for "Export Debug Data":
     //   isExportLoading   → progress overlay while we query HealthKit
     //   pickerWorkouts    → non-nil triggers the multi-select sheet
@@ -205,6 +208,27 @@ struct SettingsView: View {
                     Text(paceCalibrationExplanation)
                         .font(.caption)
                         .foregroundColor(.secondary)
+                }
+
+                Section {
+                    NavigationLink {
+                        PublisherSettingsView()
+                    } label: {
+                        HStack {
+                            Image(systemName: homeServerIcon)
+                                .foregroundStyle(homeServerColor)
+                            VStack(alignment: .leading, spacing: 2) {
+                                Text("Home Server")
+                                Text(homeServerSubtitle)
+                                    .font(.caption)
+                                    .foregroundStyle(.secondary)
+                            }
+                        }
+                    }
+                } header: {
+                    Text("Sync")
+                } footer: {
+                    Text("Auto-publish workouts, debug logs, configs, and settings to your always-on home server for use by AI chat sessions.")
                 }
 
                 Section(header: Text("Debug")) {
@@ -539,6 +563,43 @@ struct SettingsView: View {
         return "\(version) (\(build))"
     }
 
+    private var homeServerIcon: String {
+        switch publisher.status {
+        case .ok:           return "checkmark.icloud"
+        case .pushing:      return "cloud.bolt"
+        case .failed:       return "exclamationmark.icloud"
+        case .disabled:     return "icloud.slash"
+        case .idle:         return "icloud"
+        }
+    }
+
+    private var homeServerColor: Color {
+        switch publisher.status {
+        case .ok:                  return .green
+        case .pushing, .idle:      return .blue
+        case .failed:              return .red
+        case .disabled:            return .secondary
+        }
+    }
+
+    private var homeServerSubtitle: String {
+        switch publisher.status {
+        case .disabled:
+            return "Tap to configure"
+        case .pushing(let text):
+            return text
+        case .ok:
+            if publisher.totalPushedCount > 0 {
+                return "Up to date — \(publisher.totalPushedCount) pushed total"
+            }
+            return "Connected"
+        case .failed:
+            return publisher.lastError ?? "Last push failed"
+        case .idle:
+            return "Ready"
+        }
+    }
+
     private func formatQuickDistance(_ miles: Double) -> String {
         if miles == miles.rounded() {
             return String(format: "%.0f mi", miles)
@@ -787,6 +848,10 @@ struct SettingsView: View {
     private func saveSettings() {
         settings.save()
         syncManager.syncSettings(settings)
+        // Snapshot to home server. Fire-and-forget; the publisher no-ops
+        // when not configured. We're already on @MainActor here.
+        let snapshot = settings
+        Task { await HealthKitPublisher.shared.publishSettings(snapshot) }
     }
 }
 

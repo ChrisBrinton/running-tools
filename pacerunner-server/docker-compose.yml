@@ -8,6 +8,10 @@ services:
       - PORT=8080
       - PACERUNNER_DATA_DIR=/data
       - PACERUNNER_BASE_URL=https://pacerunner.brintontech.com
+      # Required for self-service iPhone registration via App Attest.
+      # Format: "<10-char Apple Team ID>.<bundle identifier>"
+      # Find your team ID at https://developer.apple.com/account → Membership.
+      - PACERUNNER_APP_ID=${PACERUNNER_APP_ID}
     volumes:
       - ./data:/data
     expose:

@@ -87,6 +87,24 @@ export interface WorkoutRow {
   summary_json: string | null;
 }
 
+export interface DeviceRegistrationRow {
+  install_id: string;
+  user_id: number;
+  ingest_token: string;
+  attest_key_id: Buffer;
+  attest_public_key: Buffer;
+  attest_environment: string;
+  attest_counter: number;
+  registered_at: string;
+}
+
+export interface RegisterChallengeRow {
+  challenge: string;
+  install_id: string;
+  expires_at: string;
+  used: number;
+}
+
 export interface WorkoutSplitRow {
   workout_id: string;
   split_number: number;
@@ -304,6 +322,35 @@ export class Store {
         FOREIGN KEY (workout_id) REFERENCES workouts(id) ON DELETE CASCADE
       );
       CREATE INDEX IF NOT EXISTS idx_splits_workout ON workout_splits(workout_id);
+
+      -- Self-service device registration via Apple App Attest.
+      --
+      -- Each iPhone install generates an install_id (UUID) locally + creates
+      -- an App Attest key. The first time it calls /ingest/register the
+      -- server verifies the attestation, mints a user + ingest token, and
+      -- persists the install→user mapping plus the attested public key.
+      -- Subsequent calls with the same install_id are idempotent — same
+      -- user, same token returned.
+      CREATE TABLE IF NOT EXISTS device_registrations (
+        install_id TEXT PRIMARY KEY,
+        user_id INTEGER NOT NULL,
+        ingest_token TEXT NOT NULL,
+        attest_key_id BLOB NOT NULL,
+        attest_public_key BLOB NOT NULL,
+        attest_environment TEXT NOT NULL,
+        attest_counter INTEGER NOT NULL DEFAULT 0,
+        registered_at TEXT NOT NULL,
+        FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+      );
+
+      -- Short-lived challenges issued for App Attest's "attest this key
+      -- against this nonce" handshake. Each challenge is consumable once.
+      CREATE TABLE IF NOT EXISTS register_challenges (
+        challenge TEXT PRIMARY KEY,
+        install_id TEXT NOT NULL,
+        expires_at TEXT NOT NULL,
+        used INTEGER NOT NULL DEFAULT 0
+      );
     `);
 
     // Additive column migrations — safe to re-run; ALTER TABLE ADD COLUMN
@@ -371,6 +418,66 @@ export class Store {
     return this.db.prepare(
       "SELECT * FROM user_tokens ORDER BY user_id, created_at DESC"
     ).all() as TokenRow[];
+  }
+
+  // ---------------------------------------------------------------------
+  // Device registrations + challenges
+  // ---------------------------------------------------------------------
+
+  createChallenge(challenge: string, installID: string, ttlSeconds: number = 300): void {
+    const expires = new Date(Date.now() + ttlSeconds * 1000).toISOString();
+    this.db.prepare(`
+      INSERT INTO register_challenges (challenge, install_id, expires_at, used)
+      VALUES (?, ?, ?, 0)
+    `).run(challenge, installID, expires);
+  }
+
+  /** Consume a challenge: returns the row if it exists, isn't used, isn't
+   *  expired, and matches the install_id. Marks it used in the process. */
+  consumeChallenge(challenge: string, installID: string): RegisterChallengeRow | undefined {
+    const row = this.db.prepare(
+      "SELECT * FROM register_challenges WHERE challenge = ?"
+    ).get(challenge) as RegisterChallengeRow | undefined;
+    if (!row) return undefined;
+    if (row.used) return undefined;
+    if (row.install_id !== installID) return undefined;
+    if (new Date(row.expires_at).getTime() < Date.now()) return undefined;
+    this.db.prepare("UPDATE register_challenges SET used = 1 WHERE challenge = ?").run(challenge);
+    return row;
+  }
+
+  /** Garbage-collect expired challenges. Cheap; called occasionally. */
+  purgeExpiredChallenges(): number {
+    const info = this.db.prepare(
+      "DELETE FROM register_challenges WHERE expires_at < ?"
+    ).run(new Date().toISOString());
+    return info.changes;
+  }
+
+  createDeviceRegistration(row: Omit<DeviceRegistrationRow, "registered_at">): void {
+    this.db.prepare(`
+      INSERT INTO device_registrations (
+        install_id, user_id, ingest_token,
+        attest_key_id, attest_public_key, attest_environment,
+        attest_counter, registered_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+    `).run(
+      row.install_id, row.user_id, row.ingest_token,
+      row.attest_key_id, row.attest_public_key, row.attest_environment,
+      row.attest_counter, new Date().toISOString(),
+    );
+  }
+
+  getDeviceRegistration(installID: string): DeviceRegistrationRow | undefined {
+    return this.db.prepare(
+      "SELECT * FROM device_registrations WHERE install_id = ?"
+    ).get(installID) as DeviceRegistrationRow | undefined;
+  }
+
+  updateDeviceCounter(installID: string, counter: number): void {
+    this.db.prepare(
+      "UPDATE device_registrations SET attest_counter = ? WHERE install_id = ?"
+    ).run(counter, installID);
   }
 
   // ---------------------------------------------------------------------

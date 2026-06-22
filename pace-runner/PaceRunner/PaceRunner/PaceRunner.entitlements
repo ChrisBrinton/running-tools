@@ -4,5 +4,10 @@
 <dict>
 	<key>com.apple.developer.healthkit</key>
 	<true/>
+	<!-- App Attest. "development" means the App Attest sandbox is used in
+	     debug builds (paired with the developmentdevelop AAGUID); release
+	     builds automatically switch to production. -->
+	<key>com.apple.developer.devicecheck.appattest-environment</key>
+	<string>development</string>
 </dict>
 </plist>

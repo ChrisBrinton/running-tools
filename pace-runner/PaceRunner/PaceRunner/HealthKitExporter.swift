@@ -1,6 +1,7 @@
 import Foundation
 import HealthKit
 import CoreLocation
+import UIKit
 
 /// Reads Apple Health workout data on iOS and packages everything we can pull
 /// from HealthKit (workout metadata, the GPS route as GPX, associated quantity
@@ -136,6 +137,84 @@ final class HealthKitExporter {
         }
         all.sort { $0.timestamp < $1.timestamp }
         return all
+    }
+
+    /// Builds the JSON-ready dictionary that the home server's
+    /// `POST /ingest/workout` endpoint expects. Includes:
+    ///   - top-level fields (id, activity_type, start/end, totals, source)
+    ///   - `raw_metadata` (HK metadata flattened to strings)
+    ///   - `route_gpx` when the workout has a route series
+    ///   - `samples` keyed by quantity name (heartRate, runningPower, …)
+    ///   - `events` (pause/resume/lap/etc.)
+    ///
+    /// Field names match `pacerunner-server/src/ingest/workout.ts`. This is
+    /// the single source of truth for what the phone publishes — the
+    /// existing `exportBundle` flow uses a slightly different (zip-friendly)
+    /// shape, so we keep them separate rather than try to unify.
+    func buildWorkoutPayload(for workout: HKWorkout) async -> [String: Any] {
+        var dict: [String: Any] = [
+            "id": workout.uuid.uuidString,
+            "activity_type": Self.activityName(workout.workoutActivityType),
+            "activity_type_raw": Int(workout.workoutActivityType.rawValue),
+            "start": Self.isoFormatter.string(from: workout.startDate),
+            "end": Self.isoFormatter.string(from: workout.endDate),
+            "duration_seconds": workout.duration,
+            "source_name": workout.sourceRevision.source.name,
+            "source_bundle_id": workout.sourceRevision.source.bundleIdentifier,
+        ]
+        if let totalDistance = workout.totalDistance {
+            dict["total_distance_meters"] = totalDistance.doubleValue(for: .meter())
+        }
+        if let totalEnergy = workout.totalEnergyBurned {
+            dict["total_energy_kcal"] = totalEnergy.doubleValue(for: .kilocalorie())
+        }
+        if let metadata = workout.metadata, !metadata.isEmpty {
+            // Flatten to string-values so JSON encoding never fails on an
+            // exotic HK metadata type. The server stores raw_metadata as a
+            // string blob anyway.
+            var stringMeta: [String: String] = [:]
+            for (k, v) in metadata { stringMeta[k] = String(describing: v) }
+            dict["raw_metadata"] = stringMeta
+        }
+
+        // Route GPX (skip silently if no route series — indoor / unauthorized)
+        if let locations = try? await fetchRouteLocations(for: workout), !locations.isEmpty {
+            dict["route_gpx"] = renderGPX(locations: locations, workout: workout)
+        }
+
+        // Quantity samples — same shape the in-app MCP get_workout returns
+        var samplesOut: [String: [[String: Any]]] = [:]
+        for (key, type) in Self.quantityTypes() {
+            let samples = await fetchSamples(for: workout, type: type)
+            guard !samples.isEmpty else { continue }
+            let unit = Self.preferredUnit(for: type)
+            samplesOut[key] = samples.map { s in
+                [
+                    "start": Self.isoFormatter.string(from: s.startDate),
+                    "end": Self.isoFormatter.string(from: s.endDate),
+                    "value": s.quantity.doubleValue(for: unit),
+                    "unit": unit.unitString,
+                ]
+            }
+        }
+        if !samplesOut.isEmpty {
+            dict["samples"] = samplesOut
+        }
+
+        if let events = workout.workoutEvents, !events.isEmpty {
+            dict["events"] = events.map { ev in
+                [
+                    "type": Self.eventName(ev.type),
+                    "start": Self.isoFormatter.string(from: ev.dateInterval.start),
+                    "duration_seconds": ev.dateInterval.duration,
+                ]
+            }
+        }
+
+        let deviceName = UIDevice.current.name
+        dict["device"] = deviceName
+
+        return dict
     }
 
     /// Quantity samples scoped to the workout (NOT all samples in the time

@@ -33,6 +33,11 @@ struct PaceRunnerApp: App {
         syncManager.cleanupStaleSyncState()
         self.syncManager = syncManager
 
+        // Eager-init the publisher so its `didBecomeActive` observer is wired
+        // before the first foreground transition. publishAll on launch is
+        // gated by isConfigured, so this is safe even for fresh installs.
+        _ = HealthKitPublisher.shared
+
         // Workout manager for iPhone-side workouts (no HKWorkoutSession on iOS,
         // background location/audio modes keep the app alive)
         self.workoutManager = WorkoutManager(

@@ -5,6 +5,7 @@ import { requireScope } from "./auth.js";
 import { mountWorkoutIngest } from "./ingest/workout.js";
 import { mountPaceRunnerLogIngest } from "./ingest/pacerunner.js";
 import { mountConfigIngest, mountSettingsIngest } from "./ingest/config_settings.js";
+import { mountRegistration } from "./ingest/register.js";
 import { mountMCP } from "./mcp/transport.js";
 import { mountOAuth } from "./oauth.js";
 
@@ -21,9 +22,14 @@ app.get("/health", (c) => c.json({ ok: true }));
 // Per-route auth, scoped by token type. `requireScope` looks the token up
 // in `user_tokens`, identifies the user, and attaches `{user, scope}` to
 // the Hono context. Admin tokens implicitly satisfy any narrower scope.
+//
+// Registration endpoints (/register/*) are deliberately NOT behind
+// requireScope — Apple App Attest verification gates them instead, so a
+// brand-new iPhone install can call them without a pre-issued token.
 app.use("/ingest/*", requireScope(store, "ingest"));
 app.use("/mcp", requireScope(store, "mcp"));
 
+mountRegistration(app, store);
 mountOAuth(app, store);
 mountWorkoutIngest(app, store);
 mountPaceRunnerLogIngest(app, store);
