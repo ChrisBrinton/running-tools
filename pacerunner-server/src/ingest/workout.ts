@@ -4,6 +4,7 @@ import { writeRouteGPX } from "../storage.js";
 import { decorateWorkoutWeather } from "../weather.js";
 import { computeSummary } from "../summary.js";
 import { computeMileSplits } from "../splits.js";
+import { computeUserBaseline } from "../baseline.js";
 
 interface WorkoutPayload {
   id: string;
@@ -48,14 +49,34 @@ export function mountWorkoutIngest(app: Hono, store: Store) {
     const rawMetaJSON = payload.raw_metadata ? JSON.stringify(payload.raw_metadata) : null;
     const isIndoor = detectIndoor(payload.raw_metadata);
 
-    // P1 — compute summary stats from samples + metadata. Cheap; one pass
-    // over each sample array. Stored on the workout row so list_workouts
-    // can return cross-workout trend data without paginating samples.
+    // Compute splits up-front so the summary can fold in derived
+    // first-half / second-half / drift / variability + the elev_loss
+    // fallback that sums per-split losses when HK metadata is missing.
+    let computedSplits: ReturnType<typeof computeMileSplits> = [];
+    if (!isIndoor && payload.route_gpx && payload.route_gpx.length > 0) {
+      try {
+        computedSplits = computeMileSplits({
+          gpx: payload.route_gpx,
+          samples: payload.samples,
+        });
+      } catch (e) {
+        console.warn(`[splits] ${payload.id}: ${e instanceof Error ? e.message : e}`);
+      }
+    }
+
+    // Recompute per-user baseline EXCLUDING this workout so it can't
+    // influence its own classification. Cheap aggregate query against
+    // the user's existing history.
+    const baseline = computeUserBaseline(store, auth.user.id, payload.id);
+
+    // Compute the summary blob with splits + baseline folded in.
     const summary = computeSummary({
       samples: payload.samples,
       rawMetadata: payload.raw_metadata,
       totalDistanceMeters: payload.total_distance_meters,
       durationSeconds: payload.duration_seconds,
+      splits: computedSplits,
+      baseline,
     });
 
     store.upsertWorkout({
@@ -110,42 +131,29 @@ export function mountWorkoutIngest(app: Hono, store: Store) {
       );
     }
 
-    // P2 — compute per-mile splits from the route + samples. Synchronous
-    // (cheap; a 6 mile run is ~3700 points and produces 6-7 split rows).
-    // Only outdoor runs with a route GPX produce meaningful splits.
+    // Persist the splits we computed earlier (before the summary pass).
+    // Splits are a derived view — never block ingest on a parse failure.
     let splitCount = 0;
-    if (!isIndoor && payload.route_gpx && payload.route_gpx.length > 0) {
-      try {
-        const splits = computeMileSplits({
-          gpx: payload.route_gpx,
-          samples: payload.samples,
-        });
-        if (splits.length > 0) {
-          store.replaceSplits(
-            payload.id,
-            splits.map((s) => ({
-              workout_id: payload.id,
-              split_number: s.split_number,
-              unit: s.unit,
-              cumulative_distance_meters: s.cumulative_distance_meters,
-              distance_meters: s.distance_meters,
-              start_time: s.start_time,
-              end_time: s.end_time,
-              duration_seconds: s.duration_seconds,
-              pace_seconds_per_mile: s.pace_seconds_per_mile,
-              avg_heart_rate_bpm: s.avg_heart_rate_bpm,
-              avg_running_power_watts: s.avg_running_power_watts,
-              elevation_gain_meters: s.elevation_gain_meters,
-              elevation_loss_meters: s.elevation_loss_meters,
-            }))
-          );
-          splitCount = splits.length;
-        }
-      } catch (e) {
-        // Splits are a derived view, not source-of-truth — never fail the
-        // ingest because of a parse glitch in the GPX.
-        console.warn(`[splits] ${payload.id}: ${e instanceof Error ? e.message : e}`);
-      }
+    if (computedSplits.length > 0) {
+      store.replaceSplits(
+        payload.id,
+        computedSplits.map((s) => ({
+          workout_id: payload.id,
+          split_number: s.split_number,
+          unit: s.unit,
+          cumulative_distance_meters: s.cumulative_distance_meters,
+          distance_meters: s.distance_meters,
+          start_time: s.start_time,
+          end_time: s.end_time,
+          duration_seconds: s.duration_seconds,
+          pace_seconds_per_mile: s.pace_seconds_per_mile,
+          avg_heart_rate_bpm: s.avg_heart_rate_bpm,
+          avg_running_power_watts: s.avg_running_power_watts,
+          elevation_gain_meters: s.elevation_gain_meters,
+          elevation_loss_meters: s.elevation_loss_meters,
+        }))
+      );
+      splitCount = computedSplits.length;
     }
 
     // Kick off weather decoration in the background. Response goes out

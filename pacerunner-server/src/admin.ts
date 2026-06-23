@@ -1,6 +1,8 @@
 import { randomBytes } from "node:crypto";
 import { Store, type TokenScope } from "./db.js";
 import { hashOAuthSecret } from "./oauth.js";
+import { computeSummary } from "./summary.js";
+import { computeUserBaseline } from "./baseline.js";
 
 /**
  * Admin CLI. Run via `npm run admin -- <command> [...flags]`.
@@ -26,6 +28,11 @@ Usage:
   npm run admin -- create-oauth-client --user-id <id> --label <label>
   npm run admin -- list-oauth-clients [--user-id <id>]
   npm run admin -- delete-oauth-client --client-id <id>
+
+  npm run admin -- recompute-summaries [--user-id <id>]
+    Re-derives Tier 1 + Tier 2 fields (hr_to_power_ratio, drift, halves,
+    workout_type, etc.) for already-ingested workouts. Safe to run any
+    time; touches only summary_json.
 
 The token/secret value is shown ONCE on creation — copy it immediately.
 `);
@@ -153,6 +160,50 @@ function main() {
       const clientId = arg("client-id", rest)!;
       const ok = store.deleteOAuthClient(clientId);
       console.log(ok ? "Deleted." : "No matching client.");
+      return;
+    }
+    case "recompute-summaries": {
+      const uidStr = arg("user-id", rest, false);
+      const targetUid = uidStr ? Number(uidStr) : undefined;
+      const users = targetUid !== undefined ? [store.getUser(targetUid)!] : store.listUsers();
+      let total = 0;
+      for (const u of users) {
+        if (!u) continue;
+        const workouts = store.listWorkouts(u.id, { limit: 10_000 });
+        // Process oldest-first so each workout's baseline reflects only
+        // its predecessors (matches the live ingest order).
+        const ordered = [...workouts].sort(
+          (a, b) => a.start_time.localeCompare(b.start_time)
+        );
+        for (const w of ordered) {
+          // Reconstruct the samples payload from quantity_samples rows.
+          const sampleRows = store.getQuantitySamples(w.id);
+          const samples: Record<string, Array<{
+            start: string; end: string; value: number; unit: string;
+          }>> = {};
+          for (const r of sampleRows) {
+            (samples[r.type] ??= []).push({
+              start: r.start_time, end: r.end_time, value: r.value, unit: r.unit,
+            });
+          }
+          const splits = store.getSplits(w.id);
+          const baseline = computeUserBaseline(store, u.id, w.id);
+          const summary = computeSummary({
+            samples,
+            rawMetadata: w.raw_metadata ? JSON.parse(w.raw_metadata) : undefined,
+            totalDistanceMeters: w.total_distance_meters,
+            durationSeconds: w.duration_seconds,
+            splits,
+            baseline,
+          });
+          store.db.prepare(
+            "UPDATE workouts SET summary_json = ? WHERE id = ?"
+          ).run(JSON.stringify(summary), w.id);
+          total++;
+        }
+        console.log(`user #${u.id} ${u.name}: ${ordered.length} workouts recomputed`);
+      }
+      console.log(`\nDone — ${total} workout summaries updated.`);
       return;
     }
     default:
