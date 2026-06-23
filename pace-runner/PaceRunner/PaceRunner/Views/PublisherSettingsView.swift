@@ -1,5 +1,6 @@
 import SwiftUI
 import UIKit
+import Combine
 import PaceRunnerShared
 
 /// Settings sub-view for the always-on home server publisher. Lives behind a
@@ -31,6 +32,11 @@ struct PublisherSettingsView: View {
     @State private var pairingTickNow = Date()
     @State private var isGeneratingPairing = false
     @State private var pairingError: String?
+
+    // Deregister UI state.
+    @State private var showingDeregisterConfirm = false
+    @State private var isDeregistering = false
+    @State private var deregisterError: String?
     @State private var showingAdvanced = false
 
     var body: some View {
@@ -110,6 +116,38 @@ struct PublisherSettingsView: View {
         } message: {
             Text("Re-evaluates which workouts to push. Server deduplicates by UUID, so this won't create duplicate entries — it just lets you re-run the backfill from scratch.")
         }
+        .alert("Deregister and delete all data?", isPresented: $showingDeregisterConfirm) {
+            Button("Delete everything", role: .destructive) {
+                Task { await performDeregister() }
+            }
+            Button("Cancel", role: .cancel) {}
+        } message: {
+            Text("This permanently deletes your account on the server, including all workouts, debug logs, configurations, and settings you've pushed. Your HealthKit data on this phone is not affected. You can register again any time.")
+        }
+        .alert("Deregister failed", isPresented: Binding(
+            get: { deregisterError != nil },
+            set: { if !$0 { deregisterError = nil } }
+        ), presenting: deregisterError) { _ in
+            Button("OK", role: .cancel) {}
+        } message: { msg in
+            Text(msg)
+        }
+    }
+
+    private func performDeregister() async {
+        deregisterError = nil
+        isDeregistering = true
+        defer { isDeregistering = false }
+        do {
+            try await registration.deregister()
+            // Also clear any in-memory token/code displays that would
+            // otherwise stick around showing stale values.
+            generatedCoachToken = nil
+            pairingCode = nil
+            pairingCodeExpiresAt = nil
+        } catch {
+            deregisterError = error.localizedDescription
+        }
     }
 
     // MARK: - Registration row
@@ -139,7 +177,26 @@ struct PublisherSettingsView: View {
                     .foregroundStyle(.red)
             }
 
-            HStack(spacing: 8) {
+            if registration.state == .registered {
+                // Registered: offer a destructive "Deregister" path. We
+                // deliberately drop the "Re-register" affordance here —
+                // the user reading "Register this device" was confusing
+                // when they were already registered.
+                Button(role: .destructive) {
+                    showingDeregisterConfirm = true
+                } label: {
+                    if isDeregistering {
+                        HStack {
+                            ProgressView()
+                            Text("Deregistering…")
+                        }
+                    } else {
+                        Label("Deregister and delete data",
+                              systemImage: "person.crop.circle.badge.xmark")
+                    }
+                }
+                .disabled(isDeregistering)
+            } else {
                 Button {
                     Task {
                         await registration.registerForce(serverBaseURL: PublisherConfig.serverBaseURL)
@@ -151,7 +208,7 @@ struct PublisherSettingsView: View {
                             Text("Registering…")
                         }
                     } else {
-                        Label(registration.state == .registered ? "Re-register" : "Register this device",
+                        Label("Register this device",
                               systemImage: "iphone.gen3.radiowaves.left.and.right")
                     }
                 }

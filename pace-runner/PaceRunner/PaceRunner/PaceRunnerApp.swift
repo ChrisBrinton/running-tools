@@ -9,6 +9,21 @@ import SwiftUI
 import UserNotifications
 import PaceRunnerShared
 
+/// Forwards UNUserNotificationCenter delegate callbacks. Stored as the
+/// shared center's delegate at launch so notifications posted by the
+/// publisher actually show up as banners while the app is foreground
+/// (iOS suppresses them by default otherwise).
+private final class ForegroundNotificationDelegate: NSObject, UNUserNotificationCenterDelegate {
+    static let shared = ForegroundNotificationDelegate()
+    func userNotificationCenter(
+        _ center: UNUserNotificationCenter,
+        willPresent notification: UNNotification,
+        withCompletionHandler completionHandler: @escaping (UNNotificationPresentationOptions) -> Void
+    ) {
+        completionHandler([.banner, .sound, .list])
+    }
+}
+
 @main
 struct PaceRunnerApp: App {
 
@@ -55,7 +70,9 @@ struct PaceRunnerApp: App {
         // Sync settings to watch on startup
         syncManager.syncSettings(AppSettings.load())
 
-        // Request notification permission for workout sync alerts
+        // Request notification permission for workout sync alerts and
+        // attach a delegate so notifications show up as foreground banners.
+        UNUserNotificationCenter.current().delegate = ForegroundNotificationDelegate.shared
         UNUserNotificationCenter.current().requestAuthorization(options: [.alert, .sound]) { granted, error in
             if let error = error {
                 print("[PaceRunnerApp] Notification auth error: \(error)")

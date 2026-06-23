@@ -56,6 +56,29 @@ final class PublisherRegistration: ObservableObject {
 
     private init() {}
 
+    /// Deregister this device and delete all of its data from the server.
+    ///
+    /// Calls `DELETE /ingest/device` (cascades the user row and removes
+    /// per-user files on disk), then wipes local state:
+    ///   - ingest token (publisher.ingestToken)
+    ///   - install_id (next register mints a fresh user_id)
+    ///   - pushed-history (so a fresh register re-publishes from scratch)
+    ///
+    /// HealthKit data on the phone is untouched — only the server copy
+    /// is removed. The user can re-register immediately after this if
+    /// they want to start over.
+    func deregister() async throws {
+        try await HealthKitPublisher.shared.deleteAccountOnServer()
+        // Local wipe — order matters: clear token + history first, then
+        // install_id last, so any in-flight state-derived UI sees the
+        // cleared token before installID flips.
+        HealthKitPublisher.shared.wipeLocalCredentials()
+        UserDefaults.standard.removeObject(forKey: installIDKey)
+        UserDefaults.standard.removeObject(forKey: "publisher_user_id")
+        state = .idle
+        lastError = nil
+    }
+
     /// Perform the full register-or-recover handshake. On success the
     /// HealthKitPublisher's serverURL + ingestToken are populated and
     /// `state == .registered`.

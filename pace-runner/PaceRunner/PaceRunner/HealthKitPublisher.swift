@@ -2,6 +2,7 @@ import Foundation
 import HealthKit
 import Combine
 import UIKit
+import UserNotifications
 import PaceRunnerShared
 
 /// Publishes PaceRunner / HealthKit data to the always-on home server
@@ -134,7 +135,7 @@ final class HealthKitPublisher: ObservableObject {
     /// isn't already in `pushedWorkoutIDs` and pushes it. Returns
     /// (success_count, failure_count, skipped_count).
     @discardableResult
-    func publishAll(daysBack: Int = 90) async -> (succeeded: Int, failed: Int, skipped: Int) {
+    func publishAll(daysBack: Int = 90, notifyEach: Bool = false) async -> (succeeded: Int, failed: Int, skipped: Int) {
         guard isConfigured else { return (0, 0, 0) }
         let exporter = HealthKitExporter.shared
         do {
@@ -173,6 +174,9 @@ final class HealthKitPublisher: ObservableObject {
             case .success:
                 ok += 1
                 await MainActor.run { self.markPushed(workout.uuid.uuidString) }
+                if notifyEach {
+                    await postWorkoutSyncNotification(for: workout)
+                }
             case .failure(let err):
                 fail += 1
                 await MainActor.run { self.lastError = err.localizedDescription }
@@ -201,8 +205,11 @@ final class HealthKitPublisher: ObservableObject {
 
     /// Like publishAll, but only the recent window. Cheap to call on app
     /// foreground — most of the time everything's already in pushedIDs.
-    private func publishPendingWorkouts(daysBack: Int) async {
-        _ = await publishAll(daysBack: daysBack)
+    /// `notifyEach=true` is used for the post-workout auto-publish path
+    /// (single workout, surface it). On launch foreground catch-up
+    /// `notifyEach=false` so multiple unsynced workouts don't spam.
+    private func publishPendingWorkouts(daysBack: Int, notifyEach: Bool = false) async {
+        _ = await publishAll(daysBack: daysBack, notifyEach: notifyEach)
     }
 
     /// Push the PR verbose log for a just-completed workout, plus try to
@@ -223,10 +230,12 @@ final class HealthKitPublisher: ObservableObject {
 
         // The HK workout may not be on this phone yet — Apple syncs HK
         // workouts from the watch on its own schedule. Schedule a retry
-        // in 30s; the foreground hook will pick it up after that.
+        // in 30s; the foreground hook will pick it up after that. Use
+        // notifyEach=true so the user sees a confirmation when the live
+        // post-workout sync lands.
         Task {
             try? await Task.sleep(nanoseconds: 30 * 1_000_000_000)
-            await publishPendingWorkouts(daysBack: 7)
+            await publishPendingWorkouts(daysBack: 7, notifyEach: true)
         }
     }
 
@@ -265,6 +274,103 @@ final class HealthKitPublisher: ObservableObject {
         totalPushedCount = 0
         lastSuccessfulPush = nil
         lastError = nil
+        recomputeStatus()
+    }
+
+    // MARK: - Notifications
+
+    /// Posts a local notification confirming that a workout was synced to
+    /// the server. iOS shows these as banners + adds to Notification
+    /// Center. We requested .alert/.sound auth at app launch already
+    /// (see PaceRunnerApp.init); if the user denied permission this
+    /// just no-ops silently.
+    private func postWorkoutSyncNotification(for workout: HKWorkout) async {
+        let center = UNUserNotificationCenter.current()
+        let settings = await center.notificationSettings()
+        guard settings.authorizationStatus == .authorized || settings.authorizationStatus == .provisional else {
+            return
+        }
+
+        let content = UNMutableNotificationContent()
+        content.title = "Workout synced"
+        content.body = workoutSyncBody(workout)
+        content.sound = .default
+
+        let request = UNNotificationRequest(
+            identifier: "workout-sync-\(workout.uuid.uuidString)",
+            content: content,
+            trigger: nil // deliver immediately
+        )
+        do {
+            try await center.add(request)
+        } catch {
+            print("[Publisher] notification add failed: \(error)")
+        }
+    }
+
+    /// Produces the body text shown in the notification banner.
+    /// Example: "5.21 mi · 50:33 · 9:42/mi"
+    private func workoutSyncBody(_ workout: HKWorkout) -> String {
+        var parts: [String] = []
+        if let distance = workout.totalDistance?.doubleValue(for: .mile()) {
+            parts.append(String(format: "%.2f mi", distance))
+        }
+        parts.append(formatDuration(workout.duration))
+        if let distance = workout.totalDistance?.doubleValue(for: .mile()),
+           distance > 0, workout.duration > 0 {
+            let secPerMile = workout.duration / distance
+            parts.append("\(formatPace(secPerMile))/mi")
+        }
+        return parts.joined(separator: " · ")
+    }
+
+    private func formatDuration(_ seconds: TimeInterval) -> String {
+        let s = Int(seconds)
+        return String(format: "%d:%02d", s / 60, s % 60)
+    }
+
+    private func formatPace(_ secPerMile: TimeInterval) -> String {
+        let s = Int(round(secPerMile))
+        return String(format: "%d:%02d", s / 60, s % 60)
+    }
+
+    // MARK: - Account deletion
+
+    /// Calls `DELETE /ingest/device` to wipe the user + all of their data
+    /// from the server. Returns when the server confirms the deletion;
+    /// caller is expected to also clear local state (install_id, token,
+    /// pushed-history) immediately afterwards.
+    func deleteAccountOnServer() async throws {
+        guard isConfigured else { throw PushError.notConfigured }
+        guard let base = URL(string: serverURL),
+              let url = URL(string: "/ingest/device", relativeTo: base) else {
+            throw PushError.notConfigured
+        }
+        var req = URLRequest(url: url)
+        req.httpMethod = "DELETE"
+        req.setValue("Bearer \(ingestToken)", forHTTPHeaderField: "Authorization")
+        req.timeoutInterval = 30
+        let (data, resp) = try await URLSession.shared.data(for: req)
+        guard let http = resp as? HTTPURLResponse else {
+            throw PushError.http(0, "non-HTTP response")
+        }
+        if http.statusCode == 401 || http.statusCode == 403 { throw PushError.unauthorized }
+        if !(200...299).contains(http.statusCode) {
+            throw PushError.http(http.statusCode, String(data: data, encoding: .utf8) ?? "")
+        }
+    }
+
+    /// Local-only wipe: forget the ingest token, the pushed-workout history,
+    /// and the cached status. Caller (typically PublisherRegistration) is
+    /// responsible for also clearing the install_id so a re-register
+    /// produces a fresh user_id on the server.
+    func wipeLocalCredentials() {
+        ingestToken = ""
+        pushedWorkoutIDs = []
+        totalPushedCount = 0
+        lastSuccessfulPush = nil
+        lastError = nil
+        inFlightWorkoutID = nil
         recomputeStatus()
     }
 
