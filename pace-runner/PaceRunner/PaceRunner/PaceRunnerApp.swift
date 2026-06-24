@@ -111,11 +111,6 @@ struct PaceRunnerApp: App {
                         Label("History", systemImage: "clock.arrow.circlepath")
                     }
 
-                MCPServerView()
-                    .tabItem {
-                        Label("MCP", systemImage: "antenna.radiowaves.left.and.right")
-                    }
-
                 SettingsView(syncManager: syncManager, configurationStore: configurationStore, historyStore: historyStore)
                     .tabItem {
                         Label("Settings", systemImage: "gear")

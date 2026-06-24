@@ -41,19 +41,13 @@ struct PublisherSettingsView: View {
 
     var body: some View {
         Form {
-            Section("Server") {
-                HStack {
-                    Image(systemName: "globe")
-                        .foregroundStyle(.secondary)
-                    Text(publisher.serverURL)
-                        .font(.system(.callout, design: .monospaced))
-                        .lineLimit(1)
-                        .truncationMode(.middle)
-                    Spacer()
-                }
-
+            Section {
                 registerRow
                 statusRow
+            } header: {
+                Text("Device")
+            } footer: {
+                Text("PaceRunner Cloud connects this device to the always-on PaceRunner backend, where your workouts can be analyzed by AI coaching sessions.")
             }
 
             Section("Backfill") {
@@ -107,7 +101,7 @@ struct PublisherSettingsView: View {
                 Text("Clears the local record of which workouts have been pushed. The next sync will re-evaluate everything in the backfill window (server upserts by UUID, so this is safe — nothing gets duplicated).")
             }
         }
-        .navigationTitle("Home Server")
+        .navigationTitle("PaceRunner Cloud")
         .alert("Reset push history?", isPresented: $showingResetConfirm) {
             Button("Reset", role: .destructive) {
                 publisher.resetPushedHistory()
@@ -244,13 +238,13 @@ struct PublisherSettingsView: View {
 
     private var registrationStatusText: String {
         switch registration.state {
-        case .registered: return "Registered with server"
+        case .registered: return "Connected to PaceRunner Cloud"
         case .registering(let s): return s
         case .unavailable: return "App Attest unavailable (simulator?)"
         case .failed: return "Registration failed"
         case .idle:
             return publisher.ingestToken.isEmpty
-                ? "Not registered"
+                ? "Not connected"
                 : "Token present (legacy / manual)"
         }
     }

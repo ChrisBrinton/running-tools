@@ -7,13 +7,7 @@
 		<string>audio</string>
 		<string>location</string>
 	</array>
-	<key>NSLocalNetworkUsageDescription</key>
-	<string>PaceRunner can host an MCP server so AI tools (like a running coach) on your other devices can read your workout data over the local network.</string>
-	<key>NSBonjourServices</key>
-	<array>
-		<string>_mcp._tcp</string>
-	</array>
-	<!-- Build-baked URL of the always-on PaceRunner server. Users don't
+	<!-- Build-baked URL of the PaceRunner Cloud Service. Users don't
 	     configure this; they just register and connect. Override in
 	     debug builds via a custom build configuration if needed. -->
 	<key>PaceRunnerServerURL</key>

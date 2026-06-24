@@ -54,7 +54,16 @@ final class PublisherRegistration: ObservableObject {
         return fresh
     }
 
-    private init() {}
+    private init() {
+        // Restore registration state on launch. The presence of an ingest
+        // token in UserDefaults means the device successfully registered
+        // in a prior session; without this, the UI would default to .idle
+        // on every cold start and show "Register this device" even though
+        // the publisher has been auto-syncing the whole time.
+        if !HealthKitPublisher.shared.ingestToken.isEmpty {
+            state = .registered
+        }
+    }
 
     /// Deregister this device and delete all of its data from the server.
     ///

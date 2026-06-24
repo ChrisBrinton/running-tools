@@ -9,18 +9,11 @@ struct SettingsView: View {
     @EnvironmentObject var entitlementManager: EntitlementManager
     @State private var settings = AppSettings.load()
     @State private var showingProUpgrade = false
-    @State private var showingAddDistance = false
-    @State private var newDistanceText = ""
-    @State private var showingAddPace = false
-    @State private var editingPace: NamedPace?
-    @State private var paceSheetName = ""
-    @State private var paceSheetMinutes = 8
-    @State private var paceSheetSeconds = 0
     @State private var showingResetConfirmation = false
     @State private var debugExportItem: DebugExportItem?
     @State private var mapExportItem: MapExportItem?
 
-    // Live publisher state for the Home Server row in this view.
+    // Live publisher state for the PaceRunner Cloud row in this view.
     @ObservedObject private var publisher: HealthKitPublisher = .shared
 
     // Multi-step async flow for "Export Debug Data":
@@ -218,7 +211,7 @@ struct SettingsView: View {
                             Image(systemName: homeServerIcon)
                                 .foregroundStyle(homeServerColor)
                             VStack(alignment: .leading, spacing: 2) {
-                                Text("Home Server")
+                                Text("PaceRunner Cloud")
                                 Text(homeServerSubtitle)
                                     .font(.caption)
                                     .foregroundStyle(.secondary)
@@ -226,9 +219,9 @@ struct SettingsView: View {
                         }
                     }
                 } header: {
-                    Text("Sync")
+                    Text("Cloud Sync")
                 } footer: {
-                    Text("Auto-publish workouts, debug logs, configs, and settings to your always-on home server for use by AI chat sessions.")
+                    Text("Auto-publish workouts, debug logs, configs, and settings so AI chat sessions can analyze your training data.")
                 }
 
                 Section(header: Text("Debug")) {
@@ -391,92 +384,27 @@ struct SettingsView: View {
                         }
                 }
 
-                Section(header: Text("Defaults for New Configurations")) {
-                    Stepper(
-                        "Default Tolerance: \(settings.defaultTolerance)s",
-                        value: $settings.defaultTolerance,
-                        in: 1...60
-                    )
-                    .onChange(of: settings.defaultTolerance) { _, _ in
-                        saveSettings()
-                    }
-                }
-
-                Section(header: Text("Quick Distances")) {
-                    ForEach(Array(settings.commonDistances.enumerated()), id: \.offset) { index, distance in
+                Section {
+                    NavigationLink {
+                        ConfigurationDefaultsView(
+                            settings: $settings,
+                            onSave: saveSettings
+                        )
+                    } label: {
                         HStack {
-                            Text(formatQuickDistance(distance))
-                            Spacer()
-                            Button(role: .destructive) {
-                                settings.commonDistances.remove(at: index)
-                                saveSettings()
-                            } label: {
-                                Image(systemName: "minus.circle.fill")
-                                    .foregroundStyle(.red)
+                            Image(systemName: "slider.horizontal.3")
+                                .foregroundStyle(.blue)
+                            VStack(alignment: .leading, spacing: 2) {
+                                Text("Configuration Defaults")
+                                Text("Tolerance, quick distances, named paces")
+                                    .font(.caption)
+                                    .foregroundStyle(.secondary)
                             }
-                            .buttonStyle(.plain)
                         }
                     }
-                    .onMove { source, destination in
-                        settings.commonDistances.move(fromOffsets: source, toOffset: destination)
-                        saveSettings()
-                    }
-
-                    Button {
-                        newDistanceText = ""
-                        showingAddDistance = true
-                    } label: {
-                        Label("Add Distance", systemImage: "plus.circle.fill")
-                    }
+                } header: {
+                    Text("Run Configurations")
                 }
-                .environment(\.editMode, .constant(.active))
-
-                Section(header: Text("Quick Paces")) {
-                    ForEach(settings.namedPaces) { namedPace in
-                        HStack {
-                            Button {
-                                editingPace = namedPace
-                                paceSheetName = namedPace.name
-                                paceSheetMinutes = namedPace.pace.minutes
-                                paceSheetSeconds = namedPace.pace.seconds
-                                showingAddPace = true
-                            } label: {
-                                HStack {
-                                    Text(namedPace.name)
-                                        .foregroundStyle(.primary)
-                                    Spacer()
-                                    Text("\(namedPace.pace.formatted)/mi")
-                                        .foregroundColor(.secondary)
-                                }
-                            }
-                            Button(role: .destructive) {
-                                if let idx = settings.namedPaces.firstIndex(where: { $0.id == namedPace.id }) {
-                                    settings.namedPaces.remove(at: idx)
-                                    saveSettings()
-                                }
-                            } label: {
-                                Image(systemName: "minus.circle.fill")
-                                    .foregroundStyle(.red)
-                            }
-                            .buttonStyle(.plain)
-                        }
-                    }
-                    .onMove { source, destination in
-                        settings.namedPaces.move(fromOffsets: source, toOffset: destination)
-                        saveSettings()
-                    }
-
-                    Button {
-                        editingPace = nil
-                        paceSheetName = ""
-                        paceSheetMinutes = 9
-                        paceSheetSeconds = 0
-                        showingAddPace = true
-                    } label: {
-                        Label("Add Pace", systemImage: "plus.circle.fill")
-                    }
-                }
-                .environment(\.editMode, .constant(.active))
 
                 Section(header: Text("About")) {
                     HStack {
@@ -490,22 +418,6 @@ struct SettingsView: View {
             .navigationTitle("Settings")
             .sheet(isPresented: $showingProUpgrade) {
                 ProUpgradeSheet()
-            }
-            .alert("Add Distance", isPresented: $showingAddDistance) {
-                TextField("Miles", text: $newDistanceText)
-                    .keyboardType(.decimalPad)
-                Button("Add") {
-                    if let miles = Double(newDistanceText), miles > 0 {
-                        settings.commonDistances.append(miles)
-                        saveSettings()
-                    }
-                }
-                Button("Cancel", role: .cancel) { }
-            } message: {
-                Text("Enter distance in miles")
-            }
-            .sheet(isPresented: $showingAddPace) {
-                paceEditSheet
             }
             .sheet(item: $debugExportItem) { item in
                 ShareSheet(text: item.text)
@@ -597,58 +509,6 @@ struct SettingsView: View {
             return publisher.lastError ?? "Last push failed"
         case .idle:
             return "Ready"
-        }
-    }
-
-    private func formatQuickDistance(_ miles: Double) -> String {
-        if miles == miles.rounded() {
-            return String(format: "%.0f mi", miles)
-        } else {
-            return String(format: "%.1f mi", miles)
-        }
-    }
-
-    private var paceEditSheet: some View {
-        NavigationStack {
-            Form {
-                TextField("Pace Name", text: $paceSheetName)
-                    .autocorrectionDisabled()
-
-                Picker("Minutes", selection: $paceSheetMinutes) {
-                    ForEach(4...20, id: \.self) { minute in
-                        Text("\(minute) min").tag(minute)
-                    }
-                }
-
-                Picker("Seconds", selection: $paceSheetSeconds) {
-                    ForEach(Array(stride(from: 0, to: 60, by: 5)), id: \.self) { second in
-                        Text(String(format: "%02d sec", second)).tag(second)
-                    }
-                }
-            }
-            .navigationTitle(editingPace == nil ? "New Pace" : "Edit Pace")
-            .navigationBarTitleDisplayMode(.inline)
-            .toolbar {
-                ToolbarItem(placement: .cancellationAction) {
-                    Button("Cancel") { showingAddPace = false }
-                }
-                ToolbarItem(placement: .confirmationAction) {
-                    Button("Save") {
-                        let trimmed = paceSheetName.trimmingCharacters(in: .whitespacesAndNewlines)
-                        guard !trimmed.isEmpty else { return }
-                        let pace = Pace(minutes: paceSheetMinutes, seconds: paceSheetSeconds)
-                        if let existing = editingPace,
-                           let index = settings.namedPaces.firstIndex(where: { $0.id == existing.id }) {
-                            settings.namedPaces[index].name = trimmed
-                            settings.namedPaces[index].pace = pace
-                        } else {
-                            settings.namedPaces.append(NamedPace(name: trimmed, pace: pace))
-                        }
-                        saveSettings()
-                        showingAddPace = false
-                    }
-                }
-            }
         }
     }
 
