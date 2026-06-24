@@ -18,6 +18,9 @@ build/
 # Spec artifacts (local cache)
 /.specify/cache/
 
+# oh-my-claudecode operational state (sessions, memory, logs, etc.)
+.omc/
+
 # Personal Health / debug exports — never commit user data
 /export.zip
 /pacerunner-export*.zip
