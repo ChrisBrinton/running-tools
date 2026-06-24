@@ -202,6 +202,10 @@ export function computeSummary(args: {
   durationSeconds: number;
   splits?: SplitForSummary[];
   baseline?: UserBaseline;
+  /** Name of the PaceRunner run configuration this workout used (e.g.
+   *  "5mi Easy"). When supplied, the classifier extracts user intent
+   *  from the name instead of guessing from HR. */
+  paceRunnerConfigName?: string | null;
 }): WorkoutSummary {
   const s = args.samples ?? {};
 
@@ -255,16 +259,26 @@ export function computeSummary(args: {
     ? avgHR / avgPower
     : null;
 
-  // Tier 2 — heuristic classification. Uses the values we just computed,
-  // plus an optional per-user baseline that the caller passes in.
-  const { workoutType, confidence } = classifyWorkout({
-    distanceMiles: args.totalDistanceMeters ? args.totalDistanceMeters / SECONDS_PER_MILE : null,
-    durationSeconds: args.durationSeconds,
-    avgHR,
-    avgPace: pace,
-    hrSamples: s.heartRate,
-    baseline: args.baseline ?? null,
-  });
+  // Tier 2 — classification. Prefer user intent (config name) when present;
+  // fall back to HR-based heuristics otherwise.
+  let workoutType: WorkoutType | null = null;
+  let confidence: number | null = null;
+  const fromConfig = classifyFromConfigName(args.paceRunnerConfigName ?? null);
+  if (fromConfig) {
+    workoutType = fromConfig.workoutType;
+    confidence = fromConfig.confidence;
+  } else {
+    const fromHeuristic = classifyWorkout({
+      distanceMiles: args.totalDistanceMeters ? args.totalDistanceMeters / SECONDS_PER_MILE : null,
+      durationSeconds: args.durationSeconds,
+      avgHR,
+      avgPace: pace,
+      hrSamples: s.heartRate,
+      baseline: args.baseline ?? null,
+    });
+    workoutType = fromHeuristic.workoutType;
+    confidence = fromHeuristic.confidence;
+  }
 
   return {
     avg_heart_rate_bpm: round(avgHR, 0),
@@ -441,6 +455,45 @@ function fractionInZone(
     if (s.value >= lo && s.value < hi) inZone++;
   }
   return count > 0 ? inZone / count : 0;
+}
+
+/** Extract workout_type from a PaceRunner config name like "5mi Easy" or
+ *  "Tempo Progression". Returns null when no keyword matches — caller
+ *  falls back to the HR heuristic in that case.
+ *
+ *  Why 0.95 confidence: the user typed this name themselves to describe
+ *  the workout's intent. It's the cleanest signal we'll ever have. We
+ *  don't go to 1.0 because the config name could be aspirational (the
+ *  user intended a tempo but actually ran easy) — the coach should still
+ *  be able to cross-check against the actual HR/pace data. */
+function classifyFromConfigName(
+  name: string | null
+): { workoutType: WorkoutType; confidence: number } | null {
+  if (!name) return null;
+  const lower = name.toLowerCase();
+  // Order matters — more specific keywords first.
+  if (/\brace\b|\bmarathon\b|\bhalf marathon\b|\b10k\b|\b5k\b/.test(lower)) {
+    return { workoutType: "race", confidence: 0.95 };
+  }
+  if (/\btempo\b|\bthreshold\b|\blactate\b/.test(lower)) {
+    return { workoutType: "tempo", confidence: 0.95 };
+  }
+  if (/\blong\b|\blsd\b/.test(lower)) {
+    return { workoutType: "long", confidence: 0.95 };
+  }
+  if (/\brecovery\b|\bshakeout\b/.test(lower)) {
+    return { workoutType: "recovery", confidence: 0.95 };
+  }
+  if (/\beasy\b|\bbase\b|\bz1\b|\bz2\b|\bzone 1\b|\bzone 2\b/.test(lower)) {
+    return { workoutType: "easy", confidence: 0.95 };
+  }
+  if (/\bwalk\b|\bjog\b/.test(lower)) {
+    return { workoutType: "walk_jog", confidence: 0.95 };
+  }
+  if (/\bmod(erate)?\b|\bsteady\b|\bmedium\b/.test(lower)) {
+    return { workoutType: "moderate", confidence: 0.95 };
+  }
+  return null;
 }
 
 function classifyWorkout(args: {

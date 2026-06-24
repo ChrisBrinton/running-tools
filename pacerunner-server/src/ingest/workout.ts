@@ -24,6 +24,10 @@ interface WorkoutPayload {
   }>>;
   events?: Array<{ type: string; start: string; duration_seconds: number }>;
   device?: string;
+  /** Optional. Name of the PaceRunner run configuration this workout used
+   *  (e.g. "5mi Easy"). Tracked separately from activity_type so the
+   *  classifier can prefer user-intent over heuristic labels. */
+  pacerunner_config_name?: string;
 }
 
 export function mountWorkoutIngest(app: Hono, store: Store) {
@@ -77,6 +81,7 @@ export function mountWorkoutIngest(app: Hono, store: Store) {
       durationSeconds: payload.duration_seconds,
       splits: computedSplits,
       baseline,
+      paceRunnerConfigName: sanitizeConfigName(payload.pacerunner_config_name),
     });
 
     store.upsertWorkout({
@@ -98,6 +103,7 @@ export function mountWorkoutIngest(app: Hono, store: Store) {
       is_indoor: isIndoor ? 1 : 0,
       pacerunner_log_path: null,
       pacerunner_workout_id: null,
+      pacerunner_config_name: sanitizeConfigName(payload.pacerunner_config_name),
       ingested_by_device: payload.device ?? null,
       summary_json: JSON.stringify(summary),
     });
@@ -190,4 +196,11 @@ function detectIndoor(rawMetadata?: Record<string, unknown>): boolean {
   if (!rawMetadata) return false;
   const flag = rawMetadata.HKIndoorWorkout ?? rawMetadata.indoorWorkout;
   return flag === "1" || flag === 1 || flag === true;
+}
+
+function sanitizeConfigName(s: unknown): string | null {
+  if (typeof s !== "string") return null;
+  const t = s.trim();
+  if (t.length === 0 || t.length > 120) return null;
+  return t;
 }

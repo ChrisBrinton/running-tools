@@ -79,6 +79,11 @@ export interface WorkoutRow {
   is_indoor: number;
   pacerunner_log_path: string | null;
   pacerunner_workout_id: string | null;
+  /** Name of the PaceRunner run configuration this workout used, e.g.
+   *  "5mi Easy" or "Tempo Progression". Comes from the phone alongside
+   *  the PR debug log when present — direct user-intent signal that the
+   *  classifier in summary.ts prefers over HR-based heuristics. */
+  pacerunner_config_name: string | null;
   ingested_at: string;
   ingested_by_device: string | null;
   /** JSON-encoded WorkoutSummary blob (avg/min/max HR, pace, power, etc.).
@@ -381,6 +386,7 @@ export class Store {
     // Additive column migrations — safe to re-run; ALTER TABLE ADD COLUMN
     // is idempotent if we guard on PRAGMA table_info.
     this.addColumnIfMissing("workouts", "summary_json", "TEXT");
+    this.addColumnIfMissing("workouts", "pacerunner_config_name", "TEXT");
   }
 
   private addColumnIfMissing(table: string, column: string, type: string): void {
@@ -627,14 +633,14 @@ export class Store {
         duration_seconds, total_distance_meters, total_energy_kcal,
         source_name, source_bundle_id, raw_metadata,
         has_route, has_samples, has_events, is_indoor,
-        pacerunner_log_path, pacerunner_workout_id,
+        pacerunner_log_path, pacerunner_workout_id, pacerunner_config_name,
         ingested_at, ingested_by_device, summary_json
       ) VALUES (
         @id, @user_id, @activity_type, @activity_type_raw, @start_time, @end_time,
         @duration_seconds, @total_distance_meters, @total_energy_kcal,
         @source_name, @source_bundle_id, @raw_metadata,
         @has_route, @has_samples, @has_events, @is_indoor,
-        @pacerunner_log_path, @pacerunner_workout_id,
+        @pacerunner_log_path, @pacerunner_workout_id, @pacerunner_config_name,
         @ingested_at, @ingested_by_device, @summary_json
       )
       ON CONFLICT(id) DO UPDATE SET
@@ -654,11 +660,31 @@ export class Store {
         is_indoor = excluded.is_indoor,
         pacerunner_log_path = COALESCE(excluded.pacerunner_log_path, workouts.pacerunner_log_path),
         pacerunner_workout_id = COALESCE(excluded.pacerunner_workout_id, workouts.pacerunner_workout_id),
+        pacerunner_config_name = COALESCE(excluded.pacerunner_config_name, workouts.pacerunner_config_name),
         ingested_at = excluded.ingested_at,
         ingested_by_device = excluded.ingested_by_device,
         summary_json = COALESCE(excluded.summary_json, workouts.summary_json)
       WHERE workouts.user_id = excluded.user_id
     `).run({ ...row, ingested_at: ingestedAt });
+  }
+
+  /** Update just the PR-side fields when a /ingest/pacerunner-log call
+   *  attaches a verbose log + config name to an existing workout row. */
+  attachPaceRunnerLogAndConfig(
+    userID: number,
+    hkID: string,
+    relPath: string,
+    prID: string,
+    configName: string | null
+  ): boolean {
+    const info = this.db.prepare(`
+      UPDATE workouts
+      SET pacerunner_log_path = ?,
+          pacerunner_workout_id = ?,
+          pacerunner_config_name = COALESCE(?, pacerunner_config_name)
+      WHERE user_id = ? AND id = ?
+    `).run(relPath, prID, configName, userID, hkID);
+    return info.changes > 0;
   }
 
   // ---------------------------------------------------------------------

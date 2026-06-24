@@ -224,7 +224,8 @@ final class HealthKitPublisher: ObservableObject {
             _ = await pushPaceRunnerLog(
                 paceRunnerID: summary.id,
                 startTime: summary.startTime,
-                text: log
+                text: log,
+                configName: summary.configurationName
             )
         }
 
@@ -475,26 +476,58 @@ final class HealthKitPublisher: ObservableObject {
         }
     }
 
+    /// Look up the PaceRunner config name for an HK workout by time-matching
+    /// against persisted workout summaries. The summary's start_time is
+    /// generally within a second of the HK workout's start; we use a
+    /// ±10 minute window because HK can shift start times slightly on the
+    /// watch side. Reads directly from UserDefaults rather than depending
+    /// on a WorkoutHistoryStore instance — keeps the publisher decoupled.
+    @MainActor
+    private func paceRunnerConfigName(for workout: HKWorkout) -> String? {
+        guard let data = UserDefaults.standard.data(forKey: "workoutSummaries") else {
+            return nil
+        }
+        let decoder = JSONDecoder()
+        decoder.dateDecodingStrategy = .iso8601
+        guard let summaries = try? decoder.decode([WorkoutSummary].self, from: data) else {
+            return nil
+        }
+        let window: TimeInterval = 10 * 60
+        for summary in summaries {
+            if abs(summary.startTime.timeIntervalSince(workout.startDate)) <= window {
+                return summary.configurationName
+            }
+        }
+        return nil
+    }
+
     /// Build the payload for an HK workout, post it, mark as pushed on success.
     private func pushOneWorkout(_ workout: HKWorkout) async -> Result<Void, PushError> {
         let exporter = HealthKitExporter.shared
-        let payload = await exporter.buildWorkoutPayload(for: workout)
+        var payload = await exporter.buildWorkoutPayload(for: workout)
+        if let configName = await paceRunnerConfigName(for: workout) {
+            payload["pacerunner_config_name"] = configName
+        }
         return await post(path: "/ingest/workout", body: payload, label: "workout \(workout.uuid.uuidString)")
     }
 
     private func pushPaceRunnerLog(
         paceRunnerID: UUID,
         startTime: Date,
-        text: String
+        text: String,
+        configName: String? = nil
     ) async -> Result<Void, PushError> {
         let iso = ISO8601DateFormatter()
         iso.formatOptions = [.withInternetDateTime]
-        let payload: [String: Any] = [
+        var payload: [String: Any] = [
             "pacerunner_workout_id": paceRunnerID.uuidString,
             "started_at": iso.string(from: startTime),
             "log": text,
             "device": UIDevice.current.name,
         ]
+        if let configName = configName {
+            payload["pacerunner_config_name"] = configName
+        }
         return await post(path: "/ingest/pacerunner-log", body: payload, label: "pr-log")
     }
 

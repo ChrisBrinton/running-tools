@@ -195,6 +195,7 @@ function main() {
             durationSeconds: w.duration_seconds,
             splits,
             baseline,
+            paceRunnerConfigName: w.pacerunner_config_name,
           });
           store.db.prepare(
             "UPDATE workouts SET summary_json = ? WHERE id = ?"
