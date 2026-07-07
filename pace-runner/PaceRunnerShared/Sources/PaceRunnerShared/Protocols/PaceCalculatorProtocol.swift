@@ -47,6 +47,13 @@ public protocol PaceCalculatorProtocol: AnyObject {
     /// - Parameter location: GPS location with timestamp
     func addSample(distance: Double, timestamp: Date)
 
+    /// Inform the calculator that the workout was paused for `pauseDuration`
+    /// seconds and has now resumed. The rolling windows must not count paused
+    /// time as running time, so the calculator slides its accumulated history
+    /// forward to stay contiguous (in "moving time") with post-resume samples.
+    /// - Parameter pauseDuration: How long the workout was paused, in seconds.
+    func notePauseGap(_ pauseDuration: TimeInterval)
+
     /// Reset calculator state
     func reset()
 }

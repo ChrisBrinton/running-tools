@@ -127,6 +127,10 @@ public final class SpeedFloorDistanceCalculator: DistanceCalculator {
     private var lastLocation: CLLocation?
 
     private let minStepMeters: Double = 0.5
+    /// Longest inter-sample gap over which integrating `speed × dt` is
+    /// meaningful. GPS samples arrive ~1 Hz; a gap beyond this means a pause or
+    /// dropout, where the instantaneous speed no longer describes the interval.
+    fileprivate static let maxSpeedFloorInterval: TimeInterval = 5
 
     public init() {}
 
@@ -138,9 +142,13 @@ public final class SpeedFloorDistanceCalculator: DistanceCalculator {
         let chord = location.distance(from: last)
         let dt = location.timestamp.timeIntervalSince(last.timestamp)
 
-        // Use speed × dt as a lower bound when valid (CLLocation.speed = -1 = unknown)
+        // Use speed × dt as a lower bound when valid (CLLocation.speed = -1 = unknown).
+        // Only integrate speed over a normal sampling interval: across a pause
+        // or a long GPS dropout, `dt` spans minutes and `speed × dt` would
+        // fabricate hundreds of meters (e.g. 1 m/s × 250 s). Beyond the cap we
+        // fall back to the chord (bounded by actual position change).
         let speedFloor: Double
-        if location.speed >= 0 && dt > 0 {
+        if location.speed >= 0 && dt > 0 && dt <= Self.maxSpeedFloorInterval {
             speedFloor = location.speed * dt
         } else {
             speedFloor = 0
@@ -186,8 +194,10 @@ public final class SpeedFloor3DDistanceCalculator: DistanceCalculator {
         let chord3D = (horizontal * horizontal + vertical * vertical).squareRoot()
 
         let dt = location.timestamp.timeIntervalSince(last.timestamp)
+        // See SpeedFloorDistanceCalculator: don't integrate speed across a
+        // pause or dropout (dt far beyond the normal sampling interval).
         let speedFloor: Double
-        if location.speed >= 0 && dt > 0 {
+        if location.speed >= 0 && dt > 0 && dt <= SpeedFloorDistanceCalculator.maxSpeedFloorInterval {
             speedFloor = location.speed * dt
         } else {
             speedFloor = 0

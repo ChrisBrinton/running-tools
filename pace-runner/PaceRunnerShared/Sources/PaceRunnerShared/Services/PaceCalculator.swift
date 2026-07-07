@@ -143,6 +143,32 @@ public final class PaceCalculator: PaceCalculatorProtocol {
         logPaceJumps(newFastPace: newFastPace)
     }
 
+    public func notePauseGap(_ pauseDuration: TimeInterval) {
+        guard pauseDuration > 0 else { return }
+
+        // Slide the accumulated history forward by the paused interval so it
+        // becomes contiguous, in "moving time", with the samples that arrive
+        // after resume. Without this the time-based windows (fast/medium) and
+        // especially the distance-based master window compute
+        // `timeTaken = last.timestamp - first.timestamp` across a span that
+        // includes the pause — inflating pace as if the runner had been
+        // crawling for the whole break. Shifting preserves the master window's
+        // history (it needs a full mile of samples) rather than discarding it.
+        samples = samples.map { sample in
+            GPSSample(
+                timestamp: sample.timestamp.addingTimeInterval(pauseDuration),
+                speed: sample.speed,
+                cumulativeDistance: sample.cumulativeDistance
+            )
+        }
+
+        // Force the first post-resume sample to re-establish the baseline
+        // rather than computing a speed across the pause (which would append a
+        // spurious near-zero-speed sample).
+        lastAcceptedDistance = nil
+        lastAcceptedTimestamp = nil
+    }
+
     public func reset() {
         samples.removeAll()
         lastAcceptedDistance = nil

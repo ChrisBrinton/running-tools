@@ -453,6 +453,11 @@ public final class WorkoutManager: NSObject, WorkoutManagerProtocol {
             totalPausedDuration += pauseDuration
             print("WorkoutManager: Resumed after \(String(format: "%.1f", pauseDuration))s pause, total paused: \(String(format: "%.1f", totalPausedDuration))s")
 
+            // Keep the rolling pace windows from counting the pause as running
+            // time — slide their history forward so the master (distance-based)
+            // average doesn't get dragged slow by the break.
+            paceCalculator.notePauseGap(pauseDuration)
+
             // Log resume event
             debugLog.logPause("Workout resumed", data: [
                 "pauseDuration": String(format: "%.1f", pauseDuration),

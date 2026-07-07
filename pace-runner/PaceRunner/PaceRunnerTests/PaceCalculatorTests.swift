@@ -217,4 +217,48 @@ final class PaceCalculatorTests: XCTestCase {
                             "Outlier filtering should prevent major pace swings")
         }
     }
+
+    /// A mid-workout pause must not be counted as running time by the rolling
+    /// pace windows. Regression test for the "moving average included the
+    /// 5-minute pause" bug: feed a steady ~8:00 pace, pause 5 minutes, resume
+    /// at the same pace, and confirm the master pace stays ~8:00 rather than
+    /// being dragged toward a crawl.
+    func testPauseIsNotCountedInMovingAverage() {
+        let start = Date()
+        var distance = 0.0
+        var elapsed = 0.0
+
+        // ~8:00/mi: 10 m every 3 s (3.33 m/s).
+        calculator.addSample(distance: 0, timestamp: start)
+        for _ in 1...20 {
+            distance += 10
+            elapsed += 3
+            calculator.addSample(distance: distance, timestamp: start.addingTimeInterval(elapsed))
+        }
+        guard let before = calculator.slowPace else {
+            XCTFail("Expected master pace before pause")
+            return
+        }
+
+        // Pause 5 minutes, then resume and keep running at the same pace. The
+        // post-resume timestamps are 300 s later in wall-clock, as on the watch.
+        let pause = 300.0
+        calculator.notePauseGap(pause)
+        for _ in 1...20 {
+            distance += 10
+            elapsed += 3
+            calculator.addSample(distance: distance, timestamp: start.addingTimeInterval(elapsed + pause))
+        }
+        guard let after = calculator.slowPace else {
+            XCTFail("Expected master pace after resume")
+            return
+        }
+
+        // Without the fix, timeTaken would include the 300 s pause and pace
+        // would balloon past 25:00/mi. It should instead stay ~8:00.
+        XCTAssertLessThan(after.totalSeconds, 600,
+                          "Master pace must exclude paused time (got \(after.formatted))")
+        XCTAssertEqual(after.totalSeconds, before.totalSeconds, accuracy: 60,
+                       "Master pace should be ~unchanged across a pause (before \(before.formatted), after \(after.formatted))")
+    }
 }
