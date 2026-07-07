@@ -81,7 +81,26 @@ export interface WorkoutSummary {
   /** 0–1 score for how confidently the heuristic landed on `workout_type`.
    *  Treat values below ~0.5 as "the coach should probably ignore the label." */
   workout_type_confidence: number | null;
+
+  // -------- Run-quality flag (execution vs. intent) ---------------------
+
+  /** How well the run held together, *independent* of `workout_type` (which
+   *  now reflects user intent via the config name and so reads 0.95 even on a
+   *  bad day). "degraded" = breakdown signals fired (high pace variability,
+   *  second-half fade, power drop); "aborted" = the run fell apart (a stalled
+   *  / walked mile, or multiple severe signals). Lets weekly trend math put an
+   *  asterisk on — or exclude — bad-day runs when averaging HR/power/pace.
+   *  Null when there aren't enough full-mile splits to judge (same gate as
+   *  `drift` / `split_variability`). */
+  run_quality: RunQuality | null;
+
+  /** Machine-readable reasons `run_quality` was not "clean" (e.g.
+   *  "pace_stdev_104s", "pace_fade_73s_per_mi", "power_drop_29w"). Empty when
+   *  clean or unjudgeable. Meant for the coach to see *why* a run was flagged. */
+  run_quality_reasons: string[];
 }
+
+export type RunQuality = "clean" | "degraded" | "aborted";
 
 export type WorkoutType =
   | "easy"
@@ -280,6 +299,17 @@ export function computeSummary(args: {
     confidence = fromHeuristic.confidence;
   }
 
+  // Run-quality — did the execution hold together? Independent of the intent
+  // label above. Uses the Tier 1 derived metrics, so it's null on the same
+  // short/split-less workouts they are.
+  const runQuality = computeRunQuality({
+    workoutType,
+    fullSplits,
+    variability,
+    firstHalf,
+    secondHalf,
+  });
+
   return {
     avg_heart_rate_bpm: round(avgHR, 0),
     max_heart_rate_bpm: hr ? Math.round(hr.max) : null,
@@ -307,6 +337,9 @@ export function computeSummary(args: {
 
     workout_type: workoutType,
     workout_type_confidence: round(confidence, 2),
+
+    run_quality: runQuality?.quality ?? null,
+    run_quality_reasons: runQuality?.reasons ?? [],
   };
 }
 
@@ -434,6 +467,110 @@ function stdev(values: (number | null)[]): number | null {
   const variance =
     xs.reduce((s, v) => s + (v - mean) ** 2, 0) / (xs.length - 1);
   return round(Math.sqrt(variance), 2);
+}
+
+function median(xs: number[]): number {
+  const sorted = [...xs].sort((a, b) => a - b);
+  const mid = Math.floor(sorted.length / 2);
+  return sorted.length % 2 ? sorted[mid] : (sorted[mid - 1] + sorted[mid]) / 2;
+}
+
+// ---------------------------------------------------------------------------
+// Run-quality flag
+// ---------------------------------------------------------------------------
+
+/**
+ * Thresholds calibrated against real ingested runs. Clean steady runs sit at
+ * pace stdev ≤ ~27 s, second-half deltas within ±30 s/mi and ±10 W; the flagged
+ * bad-day run was 104 s stdev / +73 s/mi / −29 W, and a run that fell apart hit
+ * 232 s stdev / +360 s/mi. Degraded thresholds sit well above the clean band;
+ * "severe" thresholds mark the fell-apart territory.
+ */
+const RQ = {
+  PACE_STDEV_DEGRADED: 45,   // sec — steady runs stay under ~30
+  PACE_STDEV_SEVERE: 150,
+  PACE_FADE_DEGRADED: 40,    // sec/mi slower, second half vs first
+  PACE_FADE_SEVERE: 150,
+  POWER_FADE_DEGRADED: -20,  // W drop, second half vs first
+  STALL_FACTOR: 2.0,         // a full mile slower than 2× the run's median
+} as const;
+
+/**
+ * Classify how well the run's execution matched a steady effort. Returns null
+ * when there aren't enough full-mile splits to judge (same gate as drift /
+ * variability). Each firing signal adds a machine-readable reason string.
+ *
+ * clean    — no signals (or a single mild one).
+ * degraded — real breakdown: 2+ signals, or one severe (e.g. a stalled mile).
+ * aborted  — the run fell apart: 2+ severe signals.
+ */
+function computeRunQuality(args: {
+  workoutType: WorkoutType | null;
+  fullSplits: SplitForSummary[];
+  variability: SplitVariability | null;
+  firstHalf: HalfSummary | null;
+  secondHalf: HalfSummary | null;
+}): { quality: RunQuality; reasons: string[] } | null {
+  const { workoutType, fullSplits, variability, firstHalf, secondHalf } = args;
+  if (fullSplits.length < 3) return null;
+
+  const reasons: string[] = [];
+  let severeCount = 0;
+
+  // Pace variability — but walk/jog runs are intentionally intermittent, so a
+  // high stdev there is by design, not a defect.
+  const paceStdev = variability?.pace_stdev_sec ?? null;
+  if (workoutType !== "walk_jog" && paceStdev !== null) {
+    if (paceStdev > RQ.PACE_STDEV_SEVERE) {
+      reasons.push(`pace_stdev_${Math.round(paceStdev)}s_severe`);
+      severeCount++;
+    } else if (paceStdev > RQ.PACE_STDEV_DEGRADED) {
+      reasons.push(`pace_stdev_${Math.round(paceStdev)}s`);
+    }
+  }
+
+  // Second-half fade (positive = slower in the back half).
+  const firstPace = firstHalf?.avg_pace_seconds_per_mile ?? null;
+  const secondPace = secondHalf?.avg_pace_seconds_per_mile ?? null;
+  if (firstPace !== null && secondPace !== null) {
+    const fade = secondPace - firstPace;
+    if (fade > RQ.PACE_FADE_SEVERE) {
+      reasons.push(`pace_fade_${Math.round(fade)}s_per_mi_severe`);
+      severeCount++;
+    } else if (fade > RQ.PACE_FADE_DEGRADED) {
+      reasons.push(`pace_fade_${Math.round(fade)}s_per_mi`);
+    }
+  }
+
+  // Power drop across halves — effort fading.
+  const firstPower = firstHalf?.avg_running_power_watts ?? null;
+  const secondPower = secondHalf?.avg_running_power_watts ?? null;
+  if (firstPower !== null && secondPower !== null) {
+    const drop = secondPower - firstPower;
+    if (drop < RQ.POWER_FADE_DEGRADED) {
+      reasons.push(`power_drop_${Math.round(Math.abs(drop))}w`);
+    }
+  }
+
+  // Stall — a full mile far slower than the run's median points at a walk or
+  // stop mid-run. A strong, on its own sufficient, signal.
+  const paces = fullSplits
+    .map((sp) => sp.pace_seconds_per_mile)
+    .filter((p): p is number => p !== null && Number.isFinite(p));
+  if (paces.length >= 3) {
+    const med = median(paces);
+    const slowest = Math.max(...paces);
+    if (med > 0 && slowest > RQ.STALL_FACTOR * med) {
+      reasons.push(`stall_split_${Math.round(slowest)}s_vs_median_${Math.round(med)}s`);
+      severeCount++;
+    }
+  }
+
+  if (reasons.length === 0) return { quality: "clean", reasons };
+  if (severeCount >= 2) return { quality: "aborted", reasons };
+  if (reasons.length >= 2 || severeCount >= 1) return { quality: "degraded", reasons };
+  // A single mild signal isn't enough to asterisk the run.
+  return { quality: "clean", reasons: [] };
 }
 
 // ---------------------------------------------------------------------------

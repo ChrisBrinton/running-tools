@@ -95,9 +95,11 @@ export const TOOL_DESCRIPTORS: ToolDescriptor[] = [
       "Aggregates workouts into ISO weeks for trend analysis. Returns one " +
       "entry per week in the range with total mileage, run count, " +
       "distance-weighted average pace / HR / power / hr_to_power_ratio, " +
-      "longest run, total elevation gain, weather min/avg/max, and a " +
-      "breakdown by auto-classified workout_type. Use this instead of " +
-      "pulling every workout when you only need week-level trends.",
+      "longest run, total elevation gain, weather min/avg/max, a " +
+      "breakdown by auto-classified workout_type, a run_quality_breakdown " +
+      "(clean/degraded/aborted counts), and clean_only_* averages that " +
+      "exclude degraded/aborted runs for cleaner trend lines. Use this " +
+      "instead of pulling every workout when you only need week-level trends.",
     inputSchema: {
       type: "object",
       properties: {
@@ -499,6 +501,13 @@ function weeklyEntry(
   let tempMin = Infinity;
   let tempMax = -Infinity;
   const breakdown: Record<string, number> = {};
+  // Run-quality tally + a second set of averages that excludes degraded/
+  // aborted runs, so week-over-week HR/power/pace trends can ignore bad days.
+  const qualityBreakdown: Record<string, number> = { clean: 0, degraded: 0, aborted: 0 };
+  let paceNumC = 0, paceWC = 0;
+  let hrNumC = 0, hrWC = 0;
+  let hrPowerNumC = 0, hrPowerWC = 0;
+  let powerNumC = 0, powerWC = 0;
 
   for (const w of workouts) {
     const meters = w.total_distance_meters ?? 0;
@@ -539,6 +548,27 @@ function weeklyEntry(
       if (typeof t === "string") {
         breakdown[t] = (breakdown[t] ?? 0) + 1;
       }
+
+      // Tally run quality; a null flag (short/unjudged run) counts as clean
+      // for trend purposes. Only degraded/aborted are excluded from the
+      // clean-only averages below.
+      const q = summary.run_quality;
+      const isBadDay = q === "degraded" || q === "aborted";
+      qualityBreakdown[isBadDay ? q : "clean"] += 1;
+      if (!isBadDay && meters > 0) {
+        if (typeof summary.avg_pace_seconds_per_mile === "number") {
+          paceNumC += summary.avg_pace_seconds_per_mile * meters; paceWC += meters;
+        }
+        if (typeof summary.avg_heart_rate_bpm === "number") {
+          hrNumC += summary.avg_heart_rate_bpm * meters; hrWC += meters;
+        }
+        if (typeof summary.hr_to_power_ratio === "number") {
+          hrPowerNumC += summary.hr_to_power_ratio * meters; hrPowerWC += meters;
+        }
+        if (typeof summary.avg_running_power_watts === "number") {
+          powerNumC += summary.avg_running_power_watts * meters; powerWC += meters;
+        }
+      }
     }
 
     // Pull weather temp if we have it (kept off the summary so we don't
@@ -570,6 +600,14 @@ function weeklyEntry(
     min_temp_c: tempCount > 0 ? round(tempMin, 1) : null,
     max_temp_c: tempCount > 0 ? round(tempMax, 1) : null,
     workout_breakdown: breakdown,
+    run_quality_breakdown: qualityBreakdown,
+    // Same weighted averages as above but excluding degraded/aborted runs —
+    // use these for cleaner week-over-week trend lines. Null when every run in
+    // the week was a bad day (nothing clean to average).
+    clean_only_avg_pace_seconds_per_mile: paceWC > 0 ? round(paceNumC / paceWC, 1) : null,
+    clean_only_avg_heart_rate_bpm: hrWC > 0 ? Math.round(hrNumC / hrWC) : null,
+    clean_only_avg_hr_to_power_ratio: hrPowerWC > 0 ? round(hrPowerNumC / hrPowerWC, 3) : null,
+    clean_only_avg_running_power_watts: powerWC > 0 ? round(powerNumC / powerWC, 1) : null,
   };
 }
 
