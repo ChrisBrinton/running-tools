@@ -50,6 +50,7 @@ final class HealthKitPublisher: ObservableObject {
     private let urlKey = "publisher_server_url"
     private let tokenKey = "publisher_ingest_token"
     private let pushedIDsKey = "publisher_pushed_workout_ids"
+    private let pushedLogIDsKey = "publisher_pushed_log_ids"
 
     var serverURL: String {
         get { UserDefaults.standard.string(forKey: urlKey) ?? "" }
@@ -82,6 +83,23 @@ final class HealthKitPublisher: ObservableObject {
             // Cap to a generous history — last 1000 IDs is plenty.
             let arr = Array(newValue).suffix(1000)
             UserDefaults.standard.set(Array(arr), forKey: pushedIDsKey)
+        }
+    }
+
+    /// PaceRunner workout UUIDs whose verbose log has been successfully
+    /// attached server-side. Tracked separately from `pushedWorkoutIDs`
+    /// because a log often isn't available at the instant its HK workout is
+    /// first pushed (the watch syncs the workout before, or independently of,
+    /// the log being persisted). Decoupling lets `backfillPaceRunnerLogs`
+    /// attach the log on a later pass without re-pushing the workout.
+    private var pushedLogIDs: Set<String> {
+        get {
+            let arr = UserDefaults.standard.stringArray(forKey: pushedLogIDsKey) ?? []
+            return Set(arr)
+        }
+        set {
+            let arr = Array(newValue).suffix(1000)
+            UserDefaults.standard.set(Array(arr), forKey: pushedLogIDsKey)
         }
     }
 
@@ -157,7 +175,12 @@ final class HealthKitPublisher: ObservableObject {
 
         let pushed = pushedWorkoutIDs
         let pending = workouts.filter { !pushed.contains($0.uuid.uuidString) }
+
+        // Even when nothing is pending, run the log backfill: an already-pushed
+        // workout may still be missing its PaceRunner log (log not yet available
+        // when the workout was first pushed).
         guard !pending.isEmpty else {
+            await backfillPaceRunnerLogs(workouts)
             await MainActor.run { self.status = .ok }
             return (0, 0, workouts.count)
         }
@@ -186,6 +209,11 @@ final class HealthKitPublisher: ObservableObject {
             }
         }
 
+        // Attach PaceRunner logs across all fetched workouts (freshly pushed
+        // and previously pushed alike) now that their HK workouts are on the
+        // server.
+        await backfillPaceRunnerLogs(workouts)
+
         await MainActor.run {
             self.inFlightWorkoutID = nil
             if fail == 0 {
@@ -212,22 +240,19 @@ final class HealthKitPublisher: ObservableObject {
         _ = await publishAll(daysBack: daysBack, notifyEach: notifyEach)
     }
 
-    /// Push the PR verbose log for a just-completed workout, plus try to
-    /// resolve+push the HK workout once it's available.
+    /// React to a just-completed (or just-synced) PaceRunner workout by
+    /// scheduling a publish pass once the HK workout has had time to sync from
+    /// the watch. The workout push, config-name tagging, and verbose-log
+    /// attachment all happen inside that pass (publishAll → backfill).
     private func handleSummaryReady(_ summary: WorkoutSummary) async {
         guard isConfigured else { return }
+        _ = summary // retained for signature/observer symmetry; state comes from UserDefaults
 
-        // Push the verbose log first — we always have the PR UUID. Time
-        // attachment to the HK workout happens server-side via the
-        // start-time window matcher.
-        if let log = DebugLogStore.shared.load(for: summary.id) {
-            _ = await pushPaceRunnerLog(
-                paceRunnerID: summary.id,
-                startTime: summary.startTime,
-                text: log,
-                configName: summary.configurationName
-            )
-        }
+        // The PaceRunner verbose log is attached by backfillPaceRunnerLogs
+        // (invoked from publishPendingWorkouts below) once the HK workout has
+        // synced from the watch and been pushed — it's keyed by hk_workout_id
+        // so it attaches deterministically rather than being orphaned by a
+        // premature push before the workout exists server-side.
 
         // The HK workout may not be on this phone yet — Apple syncs HK
         // workouts from the watch on its own schedule. Schedule a retry
@@ -476,44 +501,107 @@ final class HealthKitPublisher: ObservableObject {
         }
     }
 
-    /// Look up the PaceRunner config name for an HK workout by time-matching
-    /// against persisted workout summaries. The summary's start_time is
-    /// generally within a second of the HK workout's start; we use a
-    /// ±10 minute window because HK can shift start times slightly on the
-    /// watch side. Reads directly from UserDefaults rather than depending
-    /// on a WorkoutHistoryStore instance — keeps the publisher decoupled.
+    /// Find the PaceRunner workout summary that corresponds to an HK workout
+    /// by *time-interval overlap*, not just start time. The PaceRunner workout
+    /// is usually shorter than the overall HK workout and the two can start in
+    /// either order (HK often begins during a warm-up before PaceRunner is
+    /// started, or vice-versa). We pick the summary whose [start, end] interval
+    /// overlaps the HK workout's interval the most; a small tolerance lets
+    /// back-to-back-but-not-quite-overlapping intervals (starts within a couple
+    /// of minutes) still match. Reads directly from UserDefaults rather than
+    /// depending on a WorkoutHistoryStore instance — keeps the publisher
+    /// decoupled.
     @MainActor
-    private func paceRunnerConfigName(for workout: HKWorkout) -> String? {
+    private func matchingSummary(for workout: HKWorkout) -> WorkoutSummary? {
+        bestOverlappingSummary(for: workout, among: loadWorkoutSummaries())
+    }
+
+    /// Decode the persisted PaceRunner workout summaries from UserDefaults.
+    @MainActor
+    private func loadWorkoutSummaries() -> [WorkoutSummary] {
         guard let data = UserDefaults.standard.data(forKey: "workoutSummaries") else {
-            return nil
+            return []
         }
         let decoder = JSONDecoder()
         decoder.dateDecodingStrategy = .iso8601
-        guard let summaries = try? decoder.decode([WorkoutSummary].self, from: data) else {
-            return nil
-        }
-        let window: TimeInterval = 10 * 60
-        for summary in summaries {
-            if abs(summary.startTime.timeIntervalSince(workout.startDate)) <= window {
-                return summary.configurationName
-            }
-        }
-        return nil
+        return (try? decoder.decode([WorkoutSummary].self, from: data)) ?? []
     }
 
-    /// Build the payload for an HK workout, post it, mark as pushed on success.
+    /// Pick the summary whose [start, end] interval overlaps the HK workout's
+    /// interval the most. Positive overlap = seconds of true overlap; negative
+    /// = gap between the two intervals — larger is always better. A small
+    /// tolerance lets near-adjacent intervals (a few minutes' clock skew
+    /// between watch and phone) still match.
+    private func bestOverlappingSummary(
+        for workout: HKWorkout,
+        among summaries: [WorkoutSummary]
+    ) -> WorkoutSummary? {
+        let hkStart = workout.startDate
+        let hkEnd = workout.endDate
+        let tolerance: TimeInterval = 2 * 60
+        var best: WorkoutSummary?
+        var bestOverlap = -Double.greatestFiniteMagnitude
+        for summary in summaries {
+            let overlap = min(summary.endTime, hkEnd).timeIntervalSince(max(summary.startTime, hkStart))
+            if overlap > bestOverlap {
+                bestOverlap = overlap
+                best = summary
+            }
+        }
+        return bestOverlap > -tolerance ? best : nil
+    }
+
+    /// Build the payload for an HK workout, tag it with its PaceRunner config
+    /// name when one matches, post it, mark as pushed on success. The PaceRunner
+    /// verbose log is attached separately by `backfillPaceRunnerLogs` so that a
+    /// log which isn't yet available at push time still lands on a later pass.
     private func pushOneWorkout(_ workout: HKWorkout) async -> Result<Void, PushError> {
         let exporter = HealthKitExporter.shared
         var payload = await exporter.buildWorkoutPayload(for: workout)
-        if let configName = await paceRunnerConfigName(for: workout) {
-            payload["pacerunner_config_name"] = configName
+        if let summary = await matchingSummary(for: workout) {
+            payload["pacerunner_config_name"] = summary.configurationName
         }
         return await post(path: "/ingest/workout", body: payload, label: "workout \(workout.uuid.uuidString)")
+    }
+
+    /// Self-healing PaceRunner-log attachment. Runs over *every* fetched HK
+    /// workout (not just freshly-pushed ones), so a log that wasn't available
+    /// when its workout was first pushed still attaches on a later pass. Each
+    /// log is keyed by `hk_workout_id` for deterministic server-side
+    /// attachment and recorded in `pushedLogIDs` so we don't re-upload
+    /// multi-MB logs every pass. Best-effort: a failed push simply isn't
+    /// recorded and is retried next time.
+    private func backfillPaceRunnerLogs(_ workouts: [HKWorkout]) async {
+        let summaries = loadWorkoutSummaries()
+        guard !summaries.isEmpty else { return }
+        for workout in workouts {
+            guard let summary = bestOverlappingSummary(for: workout, among: summaries) else {
+                continue
+            }
+            let prID = summary.id.uuidString
+            if pushedLogIDs.contains(prID) { continue }
+            guard let log = DebugLogStore.shared.load(for: summary.id) else { continue }
+            let result = await pushPaceRunnerLog(
+                paceRunnerID: summary.id,
+                startTime: summary.startTime,
+                endTime: summary.endTime,
+                hkWorkoutID: workout.uuid.uuidString,
+                text: log,
+                configName: summary.configurationName
+            )
+            if case .success = result {
+                var attached = pushedLogIDs
+                attached.insert(prID)
+                pushedLogIDs = attached
+            }
+        }
     }
 
     private func pushPaceRunnerLog(
         paceRunnerID: UUID,
         startTime: Date,
+        endTime: Date? = nil,
+        hkWorkoutID: String? = nil,
         text: String,
         configName: String? = nil
     ) async -> Result<Void, PushError> {
@@ -525,6 +613,16 @@ final class HealthKitPublisher: ObservableObject {
             "log": text,
             "device": UIDevice.current.name,
         ]
+        // Sending the end time lets the server correlate by interval overlap
+        // when no explicit hk_workout_id is supplied.
+        if let endTime = endTime {
+            payload["ended_at"] = iso.string(from: endTime)
+        }
+        // When we already know which HK workout this log belongs to, name it
+        // so the server attaches deterministically instead of guessing by time.
+        if let hkWorkoutID = hkWorkoutID {
+            payload["hk_workout_id"] = hkWorkoutID
+        }
         if let configName = configName {
             payload["pacerunner_config_name"] = configName
         }
