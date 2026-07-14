@@ -26,7 +26,7 @@
  *     they aren't walk-bracketed and don't cluster near the end.
  */
 
-import type { IngestSample, IngestSamples } from "./summary.js";
+import type { IngestSample, IngestSamples, SplitForSummary } from "./summary.js";
 
 const METERS_PER_MILE = 1609.344;
 
@@ -211,6 +211,10 @@ function segment(power: Pt[], corePower: number): Segment[] {
 export function detectWorkoutStructure(args: {
   samples: IngestSamples | undefined;
   durationSeconds: number;
+  /** Per-mile splits (with start_time/end_time/pace). Used for tempo/interval
+   *  detection, which is a mile-scale, faster-than-easy shift rather than the
+   *  sub-minute power bursts that define strides. */
+  splits?: SplitForSummary[];
 }): WorkoutStructure | null {
   const s = args.samples ?? {};
   const powerRaw = s.runningPower;
@@ -327,27 +331,37 @@ export function detectWorkoutStructure(args: {
     };
   }
 
-  // ---- Tempo / intervals: sustained fast segments in the core region -------
-  // Conservative (uncalibrated on real tempo data yet): a "sustained" fast
-  // segment is ≥3 min. One → tempo; two or more separated by recovery →
-  // intervals. Only considered before the stride block.
-  const sustained = segs.filter(
-    (g) => g.band === "fast" && g.end <= coreEnd && g.end - g.start >= 180
-  );
+  // ---- Tempo / intervals: a faster-than-easy block across the splits -------
+  // Tempo effort sits only ~1.1× the easy power, invisible to the stride-style
+  // power band, but shows up clearly as a run of per-mile splits well faster
+  // than the easy baseline. Only meaningful on a non-stride run, and only over
+  // the pre-stride region. See detectTempo for the calibrated rules.
+  const tempo = strides ? null : detectTempo(args.splits, t0, coreEnd, dist, hr, power);
 
-  // ---- Warmup / cooldown: slower-than-core bracketing segments -------------
-  const warmup = detectBracket(segs, dist, hr, power, "warmup", coreEnd);
-  const coreStart = warmup ? warmup.end_seconds : 0;
-  const cooldown = detectBracket(segs, dist, hr, power, "cooldown", coreEnd);
-  const coreEndAdj = cooldown ? Math.min(coreEnd, cooldown.start_seconds) : coreEnd;
+  // ---- Warmup / cooldown: slower-than-core (walking) bracketing segments ---
+  const warmupWalk = detectBracket(segs, dist, hr, power, "warmup", coreEnd);
+  const cooldownWalk = detectBracket(segs, dist, hr, power, "cooldown", coreEnd);
 
   // ---- Assemble phases -----------------------------------------------------
   const phases: WorkoutPhase[] = [];
-  if (warmup) phases.push(warmup);
-
+  let coreStart = warmupWalk ? warmupWalk.end_seconds : 0;
+  let coreEndAdj = cooldownWalk ? Math.min(coreEnd, cooldownWalk.start_seconds) : coreEnd;
   let corePhaseKind: PhaseType = "steady";
-  if (sustained.length >= 2) corePhaseKind = "intervals";
-  else if (sustained.length === 1) corePhaseKind = "tempo";
+  let intervalReps: number | undefined;
+
+  if (tempo) {
+    // The tempo/interval block IS the core; the easy running before and after
+    // becomes the warmup / cooldown brackets.
+    coreStart = tempo.start_seconds;
+    coreEndAdj = tempo.end_seconds;
+    corePhaseKind = tempo.kind;
+    intervalReps = tempo.reps;
+    if (tempo.start_seconds > 60) {
+      phases.push(bracketPhase("warmup", 0, tempo.start_seconds, dist, hr, power));
+    }
+  } else if (warmupWalk) {
+    phases.push(warmupWalk);
+  }
 
   const corePhase: WorkoutPhase = {
     phase: corePhaseKind,
@@ -358,24 +372,30 @@ export function detectWorkoutStructure(args: {
     avg_hr_bpm: roundOrNull(meanIn(hr, coreStart, coreEndAdj), 0),
     avg_running_power_watts: roundOrNull(meanIn(power, coreStart, coreEndAdj), 0),
   };
-  if (corePhaseKind === "intervals") corePhase.reps = sustained.length;
+  if (intervalReps) corePhase.reps = intervalReps;
   const coreIndex = phases.push(corePhase) - 1;
 
-  if (cooldown) phases.push(cooldown);
+  if (tempo) {
+    if (coreEndAdj < T - 60) {
+      phases.push(bracketPhase("cooldown", coreEndAdj, T, dist, hr, power));
+    }
+  } else if (cooldownWalk) {
+    phases.push(cooldownWalk);
+  }
   if (strides) phases.push(strides);
 
   // A workout with only a steady core and nothing else isn't "structured" —
   // return null so the caller keeps the plain whole-workout path.
   const hasStructure =
-    strides !== null || warmup !== null || cooldown !== null || sustained.length >= 1;
+    strides !== null || tempo !== null || warmupWalk !== null || cooldownWalk !== null;
   if (!hasStructure) return null;
 
-  // Confidence: strides clusters are the cleanest signal; brackets and
-  // tempo/interval detection are softer.
+  // Confidence: strides clusters are the cleanest signal; tempo/interval and
+  // walk brackets are softer.
   let confidence = 0.5;
   if (strides) confidence = 0.85;
-  else if (sustained.length >= 1) confidence = 0.6;
-  else if (warmup || cooldown) confidence = 0.55;
+  else if (tempo) confidence = tempo.kind === "tempo" ? 0.75 : 0.7;
+  else if (warmupWalk || cooldownWalk) confidence = 0.55;
 
   return {
     phases,
@@ -385,6 +405,121 @@ export function detectWorkoutStructure(args: {
     core_start_seconds: Math.round(coreStart),
     core_end_seconds: Math.round(coreEndAdj),
     total_sample_seconds: Math.round(T),
+  };
+}
+
+const TEMPO = {
+  MIN_SPLITS: 4, // need room for easy + tempo + easy
+  WALK_PACE: 780, // s/mi; a split slower than this is walking, not easy running
+  EASY_SLOWEST_FRACTION: 0.4, // baseline = median of the slowest this-fraction
+  PACE_DELTA: 30, // s/mi faster than easy to count a split as tempo
+} as const;
+
+interface TempoResult {
+  start_seconds: number;
+  end_seconds: number;
+  kind: "tempo" | "intervals";
+  reps?: number;
+}
+
+/**
+ * Detect a tempo (one sustained faster block) or intervals (≥2 faster blocks
+ * separated by recovery) from the per-mile splits.
+ *
+ * Method (calibrated against a real 2 mi easy + 3 mi tempo run, where tempo
+ * power was only ~1.1× easy — far too subtle for a power-band test, but a clear
+ * ~40 s/mi pace shift at the split level):
+ *   - Consider full-mile splits in the pre-stride region only.
+ *   - If any split is walking pace, this is a bonk / run-walk, not a clean
+ *     tempo — bail (run_quality already handles those as degraded/aborted).
+ *   - Easy baseline = median pace of the slowest ~40% of splits (robust even
+ *     when the tempo block dominates the run).
+ *   - A tempo split is ≥ PACE_DELTA faster than that baseline; a block is ≥2
+ *     contiguous tempo splits. One block → tempo; ≥2 → intervals. A block
+ *     spanning every split (no easy bracket at all) is just a fast run, not a
+ *     tempo — rejected.
+ *
+ * Interval detection is uncalibrated (no real interval data yet); the ≥2-block
+ * rule is a placeholder that won't fire on steady/tempo runs.
+ */
+function detectTempo(
+  splits: SplitForSummary[] | undefined,
+  t0: number | null,
+  coreEnd: number,
+  dist: Pt[],
+  hr: Pt[],
+  power: Pt[]
+): TempoResult | null {
+  if (!splits || t0 === null) return null;
+  const elapsed = splits
+    .filter(
+      (s) =>
+        (s.distance_meters ?? 0) >= 0.5 * METERS_PER_MILE &&
+        s.pace_seconds_per_mile != null &&
+        s.start_time != null &&
+        s.end_time != null
+    )
+    .map((s) => ({
+      startSec: Date.parse(s.start_time!) / 1000 - t0,
+      endSec: Date.parse(s.end_time!) / 1000 - t0,
+      pace: s.pace_seconds_per_mile as number,
+    }))
+    .filter((s) => Number.isFinite(s.startSec) && s.endSec <= coreEnd + 15);
+  if (elapsed.length < TEMPO.MIN_SPLITS) return null;
+
+  const paces = elapsed.map((s) => s.pace);
+  if (paces.some((p) => p > TEMPO.WALK_PACE)) return null; // bonk / run-walk
+
+  const slowestFirst = [...paces].sort((a, b) => b - a);
+  const k = Math.max(2, Math.round(paces.length * TEMPO.EASY_SLOWEST_FRACTION));
+  const easy = median(slowestFirst.slice(0, k));
+  const threshold = easy - TEMPO.PACE_DELTA;
+
+  const mask = paces.map((p) => p <= threshold);
+  const blocks: Array<[number, number]> = [];
+  let i = 0;
+  while (i < mask.length) {
+    if (mask[i]) {
+      let j = i;
+      while (j < mask.length && mask[j]) j++;
+      if (j - i >= 2) blocks.push([i, j]);
+      i = j;
+    } else {
+      i++;
+    }
+  }
+  if (blocks.length === 0) return null;
+  // A single block that spans every split is just a fast run, not a tempo
+  // bracketed by easy running.
+  if (blocks.length === 1 && blocks[0][1] - blocks[0][0] >= mask.length) return null;
+
+  const first = elapsed[blocks[0][0]];
+  const last = elapsed[blocks[blocks.length - 1][1] - 1];
+  return {
+    start_seconds: Math.round(first.startSec),
+    end_seconds: Math.round(last.endSec),
+    kind: blocks.length >= 2 ? "intervals" : "tempo",
+    reps: blocks.length >= 2 ? blocks.length : undefined,
+  };
+}
+
+/** Build a warmup/cooldown phase over an elapsed window from the sample series. */
+function bracketPhase(
+  kind: "warmup" | "cooldown",
+  startSec: number,
+  endSec: number,
+  dist: Pt[],
+  hr: Pt[],
+  power: Pt[]
+): WorkoutPhase {
+  return {
+    phase: kind,
+    start_seconds: Math.round(startSec),
+    end_seconds: Math.round(endSec),
+    distance_miles: round(sumIn(dist, startSec, endSec) / METERS_PER_MILE, 2),
+    avg_pace_seconds_per_mile: pace(dist, startSec, endSec),
+    avg_hr_bpm: roundOrNull(meanIn(hr, startSec, endSec), 0),
+    avg_running_power_watts: roundOrNull(meanIn(power, startSec, endSec), 0),
   };
 }
 

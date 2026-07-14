@@ -398,6 +398,7 @@ export function computeSummary(args: {
   const structure = detectWorkoutStructure({
     samples: args.samples,
     durationSeconds: args.durationSeconds,
+    splits: args.splits,
   });
   const t0 = workoutStartEpoch(s);
   const coreStart = structure?.core_start_seconds ?? 0;
