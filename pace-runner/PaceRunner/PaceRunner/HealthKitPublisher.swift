@@ -147,6 +147,18 @@ final class HealthKitPublisher: ObservableObject {
         }
     }
 
+    /// Install the HealthKit background-delivery observer so the OS wakes the
+    /// app to push new workouts even when it isn't in the foreground. The
+    /// exporter only installs the underlying query once, so this is cheap to
+    /// call repeatedly. When woken, we run a 7-day catch-up with per-workout
+    /// notifications so the user still gets the "synced" ping in the background.
+    private func enableBackgroundSync() {
+        guard isConfigured else { return }
+        HealthKitExporter.shared.startWorkoutBackgroundDelivery { [weak self] in
+            await self?.publishPendingWorkouts(daysBack: 7, notifyEach: true)
+        }
+    }
+
     // MARK: - High-level operations
 
     /// Manual button. Looks back `daysBack` days for any HK workout that
@@ -162,6 +174,10 @@ final class HealthKitPublisher: ObservableObject {
             await MainActor.run { self.fail("HealthKit auth failed: \(error.localizedDescription)") }
             return (0, 0, 0)
         }
+
+        // Now that we're configured and authorized, make sure the background
+        // observer is installed so future runs sync without opening the app.
+        enableBackgroundSync()
 
         let now = Date()
         let since = Calendar.current.date(byAdding: .day, value: -daysBack, to: now) ?? now

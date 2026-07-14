@@ -4,6 +4,12 @@
 <dict>
 	<key>com.apple.developer.healthkit</key>
 	<true/>
+	<!-- Wake the app in the background when a new workout lands in HealthKit
+	     (e.g. the watch finishes syncing a finished run) so the publisher can
+	     push it without the user opening the app. Required for
+	     HKHealthStore.enableBackgroundDelivery. -->
+	<key>com.apple.developer.healthkit.background-delivery</key>
+	<true/>
 	<!-- App Attest. "development" means the App Attest sandbox is used in
 	     debug builds (paired with the developmentdevelop AAGUID); release
 	     builds automatically switch to production. -->

@@ -76,6 +76,46 @@ final class HealthKitExporter {
         healthStore.authorizationStatus(for: .workoutType()) != .notDetermined
     }
 
+    // MARK: - Background delivery
+
+    private var workoutObserverQuery: HKObserverQuery?
+
+    /// Ask HealthKit to wake the app in the background whenever the set of
+    /// workouts changes — e.g. when the watch finishes syncing a run that
+    /// ended while the phone app was closed. iOS launches/resumes the app,
+    /// runs the observer's update handler, and expects `completion()` to be
+    /// called promptly; failing to call it makes HealthKit throttle or stop
+    /// future deliveries.
+    ///
+    /// Idempotent: the underlying `HKObserverQuery` is only installed once, so
+    /// this is safe to call on every foreground pass. Must be called *after*
+    /// `requestAuthorization()` — enabling background delivery without workout
+    /// read access is a no-op that iOS silently rejects.
+    ///
+    /// The `handler` runs off the main actor (HealthKit's own queue); keep it
+    /// `Sendable` and hop to the main actor inside if it touches UI state.
+    func startWorkoutBackgroundDelivery(_ handler: @escaping @Sendable () async -> Void) {
+        guard HKHealthStore.isHealthDataAvailable() else { return }
+        guard workoutObserverQuery == nil else { return }
+
+        let workoutType = HKObjectType.workoutType()
+        let query = HKObserverQuery(sampleType: workoutType, predicate: nil) { _, completion, _ in
+            // Run the push pass, then always signal completion so HealthKit
+            // keeps delivering future updates (even if the pass itself failed).
+            Task {
+                await handler()
+                completion()
+            }
+        }
+        healthStore.execute(query)
+        workoutObserverQuery = query
+
+        // `.immediate` is honored for workouts (unlike most quantity types,
+        // which iOS floors at hourly). Failure is non-fatal: we still catch up
+        // on the next foreground.
+        healthStore.enableBackgroundDelivery(for: workoutType, frequency: .immediate) { _, _ in }
+    }
+
     // MARK: - Queries
 
     /// Workouts whose start falls in [from, to). Sorted oldest-first.
