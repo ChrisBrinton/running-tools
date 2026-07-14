@@ -57,7 +57,18 @@ export const TOOL_DESCRIPTORS: ToolDescriptor[] = [
       "thin; treat them as opaque and prefer `splits` for analysis.\n" +
       "  • `splits` is per-mile, derived from the GPS trace via interpolation " +
       "(not from Watch lap-button presses). Each split carries distance, " +
-      "duration, pace (sec/mi), mean HR, mean power, elevation gain/loss.",
+      "duration, pace (sec/mi), mean HR, mean power, elevation gain/loss.\n" +
+      "  • `metadata.summary.workout_structure` (when non-null) describes the " +
+      "detected phases (warmup/steady/tempo/intervals/strides/cooldown) with a " +
+      "`core_phase_index`. When present, the summary's effort metrics (avg HR / " +
+      "pace / power, hr_to_power_ratio, first/second_half, drift, " +
+      "split_variability, run_quality) are computed over the CORE phase only — " +
+      "e.g. an easy run with strides reports the steady portion, not the stride " +
+      "coda — and the whole-session numbers are preserved under " +
+      "`metadata.summary.full_workout_summary`. `run_quality: \"structured\"` " +
+      "means exactly this; the core execution is in `run_quality_reasons` " +
+      "(`core_clean` etc.). `planned_workout_type` is the intent from the config " +
+      "name, distinct from the possibly data-inferred `workout_type`.",
     inputSchema: {
       type: "object",
       required: ["id"],
@@ -97,9 +108,11 @@ export const TOOL_DESCRIPTORS: ToolDescriptor[] = [
       "distance-weighted average pace / HR / power / hr_to_power_ratio, " +
       "longest run, total elevation gain, weather min/avg/max, a " +
       "breakdown by auto-classified workout_type, a run_quality_breakdown " +
-      "(clean/degraded/aborted counts), and clean_only_* averages that " +
-      "exclude degraded/aborted runs for cleaner trend lines. Use this " +
-      "instead of pulling every workout when you only need week-level trends.",
+      "(clean/degraded/aborted/structured counts), and clean_only_* averages " +
+      "that exclude degraded/aborted runs for cleaner trend lines. \"structured\" " +
+      "runs (e.g. easy + strides) are kept in the clean_only averages — their " +
+      "metrics are already core-phase-only — and counted in their own bucket. " +
+      "Use this instead of pulling every workout when you only need week-level trends.",
     inputSchema: {
       type: "object",
       properties: {
@@ -503,7 +516,7 @@ function weeklyEntry(
   const breakdown: Record<string, number> = {};
   // Run-quality tally + a second set of averages that excludes degraded/
   // aborted runs, so week-over-week HR/power/pace trends can ignore bad days.
-  const qualityBreakdown: Record<string, number> = { clean: 0, degraded: 0, aborted: 0 };
+  const qualityBreakdown: Record<string, number> = { clean: 0, degraded: 0, aborted: 0, structured: 0 };
   let paceNumC = 0, paceWC = 0;
   let hrNumC = 0, hrWC = 0;
   let hrPowerNumC = 0, hrPowerWC = 0;
@@ -550,12 +563,25 @@ function weeklyEntry(
       }
 
       // Tally run quality; a null flag (short/unjudged run) counts as clean
-      // for trend purposes. Only degraded/aborted are excluded from the
-      // clean-only averages below.
+      // for trend purposes. "structured" runs (strides/tempo/intervals) carry
+      // core-phase-only metrics that ARE clean training data, so they're kept
+      // in the clean-only averages — but tallied in their own bucket, not
+      // "clean". Only degraded/aborted are excluded from the averages below.
       const q = summary.run_quality;
+      const reasons = Array.isArray(summary.run_quality_reasons)
+        ? summary.run_quality_reasons : [];
       const isBadDay = q === "degraded" || q === "aborted";
-      qualityBreakdown[isBadDay ? q : "clean"] += 1;
-      if (!isBadDay && meters > 0) {
+      const isStructured = q === "structured";
+      const bucket = isBadDay ? q : isStructured ? "structured" : "clean";
+      qualityBreakdown[bucket] = (qualityBreakdown[bucket] ?? 0) + 1;
+      // Include in the clean-only trend averages only when the effort was
+      // genuinely clean: a plain clean/unjudged run, or a structured run whose
+      // CORE was clean (reasons carry "core_clean"). A structured run whose
+      // core was degraded/aborted/unjudgeable is excluded, so "structured"
+      // can't silently fold a bad (or unjudgeable) core into clean_only.
+      const coreWasClean = reasons.includes("core_clean");
+      const includeInClean = !isBadDay && (!isStructured || coreWasClean);
+      if (includeInClean && meters > 0) {
         if (typeof summary.avg_pace_seconds_per_mile === "number") {
           paceNumC += summary.avg_pace_seconds_per_mile * meters; paceWC += meters;
         }

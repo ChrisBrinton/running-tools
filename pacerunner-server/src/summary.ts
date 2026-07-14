@@ -13,6 +13,8 @@
  * the write path, not on every read.
  */
 
+import { detectWorkoutStructure, type WorkoutStructure } from "./structure.js";
+
 const SECONDS_PER_MILE = 1609.344;
 
 export interface IngestSample {
@@ -88,19 +90,56 @@ export interface WorkoutSummary {
    *  now reflects user intent via the config name and so reads 0.95 even on a
    *  bad day). "degraded" = breakdown signals fired (high pace variability,
    *  second-half fade, power drop); "aborted" = the run fell apart (a stalled
-   *  / walked mile, or multiple severe signals). Lets weekly trend math put an
-   *  asterisk on — or exclude — bad-day runs when averaging HR/power/pace.
-   *  Null when there aren't enough full-mile splits to judge (same gate as
-   *  `drift` / `split_variability`). */
+   *  / walked mile, or multiple severe signals); "structured" = the workout had
+   *  detected structure (e.g. strides at the end) so whole-workout flags aren't
+   *  meaningful — the effort metrics on this summary are computed over the core
+   *  phase only, and `run_quality_reasons` carries a `core_*` code for how the
+   *  core effort itself executed. Lets weekly trend math put an asterisk on — or
+   *  exclude — bad-day runs when averaging HR/power/pace. Null when there aren't
+   *  enough full-mile splits to judge (same gate as `drift` /
+   *  `split_variability`). */
   run_quality: RunQuality | null;
 
   /** Machine-readable reasons `run_quality` was not "clean" (e.g.
-   *  "pace_stdev_104s", "pace_fade_73s_per_mi", "power_drop_29w"). Empty when
-   *  clean or unjudgeable. Meant for the coach to see *why* a run was flagged. */
+   *  "pace_stdev_104s", "pace_fade_73s_per_mi", "power_drop_29w"). For
+   *  "structured" runs, carries phase-scoped codes ("core_clean",
+   *  "strides_4reps"). Empty when clean or unjudgeable. Meant for the coach to
+   *  see *why* a run was flagged. */
   run_quality_reasons: string[];
+
+  // -------- Workout structure (strides / warmup / tempo / intervals) -----
+
+  /** Detected phase structure of the workout, or null for a single continuous
+   *  effort. When present, all the effort metrics above are computed over the
+   *  core phase only (see `workout_structure.core_phase_index`); the
+   *  whole-workout values are preserved under `full_workout_summary`. */
+  workout_structure: WorkoutStructure | null;
+
+  /** Convenience flag: the workout ended with a stride block. Mirror of
+   *  `workout_structure?.has_strides`. */
+  has_strides: boolean;
+
+  /** The workout's intended type, parsed from the PaceRunner config name
+   *  ("6mi Easy" → easy). Distinct from `workout_type` (which may be
+   *  data-inferred) so planned-vs-actual can be compared. Null when the
+   *  workout wasn't run through a named PaceRunner configuration. */
+  planned_workout_type: WorkoutType | null;
+
+  /** Whole-workout values for the metrics that were narrowed to the core
+   *  phase, kept for total-training-load / weekly-mileage questions that want
+   *  the full session. Null when no structure was detected (the top-level
+   *  fields already ARE the whole workout in that case). */
+  full_workout_summary: FullWorkoutSummary | null;
 }
 
-export type RunQuality = "clean" | "degraded" | "aborted";
+export interface FullWorkoutSummary {
+  avg_heart_rate_bpm: number | null;
+  avg_pace_seconds_per_mile: number | null;
+  avg_running_power_watts: number | null;
+  hr_to_power_ratio: number | null;
+}
+
+export type RunQuality = "clean" | "degraded" | "aborted" | "structured";
 
 export type WorkoutType =
   | "easy"
@@ -160,6 +199,83 @@ function avg(a: Aggregate | null): number | null {
   return a ? a.sum / a.count : null;
 }
 
+/** Earliest runningPower sample time (epoch seconds), or null. Structure
+ *  detection windows on the same t0, so the two agree. */
+function workoutStartEpoch(s: IngestSamples): number | null {
+  const arr = s.runningPower;
+  if (!arr || arr.length === 0) return null;
+  let min = Infinity;
+  for (const x of arr) {
+    const t = Date.parse(x.start) / 1000;
+    if (Number.isFinite(t) && t < min) min = t;
+  }
+  return Number.isFinite(min) ? min : null;
+}
+
+/** Aggregate over samples whose start falls in the elapsed window
+ *  [startSec, endSec) relative to `t0`. */
+function aggregateIn(
+  samples: IngestSample[] | undefined,
+  t0: number,
+  startSec: number,
+  endSec: number
+): Aggregate | null {
+  if (!samples || samples.length === 0) return null;
+  let count = 0, sum = 0, min = Infinity, max = -Infinity;
+  for (const sm of samples) {
+    if (!Number.isFinite(sm.value)) continue;
+    const el = Date.parse(sm.start) / 1000 - t0;
+    if (!Number.isFinite(el) || el < startSec || el >= endSec) continue;
+    count++;
+    sum += sm.value;
+    if (sm.value < min) min = sm.value;
+    if (sm.value > max) max = sm.value;
+  }
+  if (count === 0) return null;
+  return { count, sum, min, max };
+}
+
+/** Sum of incremental sample values (e.g. distanceWalkingRunning meters) in
+ *  the elapsed window [startSec, endSec) relative to `t0`. */
+function sumIn(
+  samples: IngestSample[] | undefined,
+  t0: number,
+  startSec: number,
+  endSec: number
+): number {
+  if (!samples) return 0;
+  let sum = 0;
+  for (const sm of samples) {
+    if (!Number.isFinite(sm.value)) continue;
+    const el = Date.parse(sm.start) / 1000 - t0;
+    if (!Number.isFinite(el) || el < startSec || el >= endSec) continue;
+    sum += sm.value;
+  }
+  return sum;
+}
+
+/** True when a split's time window lies within the core-phase window. The
+ *  split that straddles the core-end boundary (the one containing the stride
+ *  block) is excluded so it doesn't pollute the steady-effort metrics. Splits
+ *  without timestamps are kept (we can't place them). Split elapsed is measured
+ *  from the SAME power-based `t0` that `coreStart`/`coreEnd` use — split
+ *  timestamps (GPX trkpt clock) and sample timestamps share the watch's wall
+ *  clock, so subtracting the one `t0` puts both on one axis and avoids a
+ *  two-clock mismatch at the boundary. */
+function splitInCore(
+  sp: SplitForSummary,
+  t0: number,
+  coreStart: number,
+  coreEnd: number
+): boolean {
+  if (!sp.start_time || !sp.end_time) return true;
+  const start = Date.parse(sp.start_time) / 1000 - t0;
+  const end = Date.parse(sp.end_time) / 1000 - t0;
+  if (!Number.isFinite(start) || !Number.isFinite(end)) return true;
+  const TOL = 15;
+  return start >= coreStart - TOL && end <= coreEnd + TOL;
+}
+
 function round(n: number | null, decimals = 1): number | null {
   if (n === null) return null;
   const f = Math.pow(10, decimals);
@@ -202,6 +318,12 @@ export interface SplitForSummary {
   avg_running_power_watts: number | null;
   elevation_gain_meters: number;
   elevation_loss_meters: number;
+  /** ISO start/end of the split. Present on the ComputedSplit rows we're
+   *  handed at runtime; optional here so callers with a leaner shape still
+   *  type-check. Used to keep only the core-phase splits when a workout has
+   *  detected structure. */
+  start_time?: string;
+  end_time?: string;
 }
 
 /**
@@ -268,18 +390,74 @@ export function computeSummary(args: {
       ? elevLossFromSplits
       : null;
 
-  // Tier 1 derived metrics. All take the same defensive shape: null if
-  // we don't have the inputs to compute meaningfully.
+  // ---- Workout structure -------------------------------------------------
+  // Detect strides / warmup / tempo / intervals from the per-sample streams.
+  // When present, the effort metrics below are computed over the *core* phase
+  // only (so a stride coda doesn't read as a "degraded" easy run); the
+  // whole-workout numbers are preserved under `full_workout_summary`.
+  const structure = detectWorkoutStructure({
+    samples: args.samples,
+    durationSeconds: args.durationSeconds,
+  });
+  const t0 = workoutStartEpoch(s);
+  const coreStart = structure?.core_start_seconds ?? 0;
+  const coreEnd = structure?.core_end_seconds ?? Infinity;
+  // "Narrowed" = the core window is a strict subset of the whole workout, so
+  // the sample-derived means genuinely differ from the whole-workout ones.
+  // Compare against the structure's own sample-elapsed span (same clock as
+  // core_start/core_end) — NOT args.durationSeconds, which may be moving-time
+  // and would misjudge the boundary on a run with pauses.
+  const sampleSpan = structure?.total_sample_seconds ?? 0;
+  const narrowed =
+    structure !== null &&
+    t0 !== null &&
+    (coreStart > 5 || coreEnd < sampleSpan - 5);
+
+  // Core-phase aggregates — windowed to [coreStart, coreEnd] when narrowed,
+  // otherwise identical to the whole-workout aggregates computed above.
+  const win = (all: Aggregate | null, key: string): Aggregate | null =>
+    narrowed && t0 !== null ? aggregateIn(s[key], t0, coreStart, coreEnd) : all;
+  const coreHR = win(hr, "heartRate");
+  const corePowerAgg = win(power, "runningPower");
+  const coreSpeed = win(speed, "runningSpeed");
+  const coreStrideAgg = win(stride, "runningStrideLength");
+  const coreGct = win(gct, "runningGroundContactTime");
+  const coreVosc = win(vosc, "runningVerticalOscillation");
+  const avgCoreHR = avg(coreHR);
+  const avgCorePower = avg(corePowerAgg);
+
+  // Core-phase pace + cadence, recomputed from the windowed distance/step sums.
+  let corePace = pace;
+  let coreCadence = cadence;
+  if (narrowed && t0 !== null) {
+    const coreDur = Math.max(0, Math.min(coreEnd, args.durationSeconds) - coreStart);
+    const coreMeters = sumIn(s.distanceWalkingRunning, t0, coreStart, coreEnd);
+    corePace = coreMeters > 0 && coreDur > 0
+      ? coreDur / (coreMeters / SECONDS_PER_MILE)
+      : null;
+    const coreSteps = aggregateIn(s.stepCount, t0, coreStart, coreEnd);
+    coreCadence = coreSteps && coreDur > 0 ? (coreSteps.sum / coreDur) * 60 : null;
+  }
+
+  // Tier 1 derived metrics — computed over the core-phase splits. When not
+  // narrowed, `coreSplits === fullSplits`, preserving prior behavior.
   const fullSplits = (args.splits ?? []).filter(isFullSplit);
-  const { firstHalf, secondHalf } = computeHalves(fullSplits);
-  const drift = computeDrift(fullSplits);
-  const variability = computeVariability(fullSplits);
-  const hrToPower = (avgHR !== null && avgPower !== null && avgPower > 0)
+  const coreSplits = narrowed
+    ? fullSplits.filter((sp) => splitInCore(sp, t0 ?? 0, coreStart, coreEnd))
+    : fullSplits;
+  const { firstHalf, secondHalf } = computeHalves(coreSplits);
+  const drift = computeDrift(coreSplits);
+  const variability = computeVariability(coreSplits);
+
+  const hrToPowerCore = (avgCoreHR !== null && avgCorePower !== null && avgCorePower > 0)
+    ? avgCoreHR / avgCorePower
+    : null;
+  const hrToPowerFull = (avgHR !== null && avgPower !== null && avgPower > 0)
     ? avgHR / avgPower
     : null;
 
   // Tier 2 — classification. Prefer user intent (config name) when present;
-  // fall back to HR-based heuristics otherwise.
+  // fall back to HR-based heuristics (on core-phase HR/pace) otherwise.
   let workoutType: WorkoutType | null = null;
   let confidence: number | null = null;
   const fromConfig = classifyFromConfigName(args.paceRunnerConfigName ?? null);
@@ -290,46 +468,61 @@ export function computeSummary(args: {
     const fromHeuristic = classifyWorkout({
       distanceMiles: args.totalDistanceMeters ? args.totalDistanceMeters / SECONDS_PER_MILE : null,
       durationSeconds: args.durationSeconds,
-      avgHR,
-      avgPace: pace,
+      avgHR: avgCoreHR,
+      avgPace: corePace,
       hrSamples: s.heartRate,
       baseline: args.baseline ?? null,
     });
     workoutType = fromHeuristic.workoutType;
     confidence = fromHeuristic.confidence;
   }
+  // Intended type, always parsed from the config name — distinct from the
+  // (possibly data-inferred) workout_type so planned-vs-actual can be compared.
+  const plannedType = fromConfig?.workoutType ?? null;
 
-  // Run-quality — did the execution hold together? Independent of the intent
-  // label above. Uses the Tier 1 derived metrics, so it's null on the same
-  // short/split-less workouts they are.
-  const runQuality = computeRunQuality({
+  // Run-quality over the core effort. On a structured workout the whole-workout
+  // flags aren't meaningful, so the top-level quality becomes "structured" and
+  // the core execution is recorded in the reasons (`core_clean` / `core_degraded`).
+  const coreQuality = computeRunQuality({
     workoutType,
-    fullSplits,
+    fullSplits: coreSplits,
     variability,
     firstHalf,
     secondHalf,
   });
+  let quality: RunQuality | null = coreQuality?.quality ?? null;
+  let qualityReasons: string[] = coreQuality?.reasons ?? [];
+  if (structure) {
+    const stridePhase = structure.phases.find((p) => p.phase === "strides");
+    qualityReasons = [
+      `core_${coreQuality?.quality ?? "unjudged"}`,
+      ...(stridePhase ? [`strides_${stridePhase.reps ?? 0}reps`] : []),
+      ...qualityReasons,
+    ];
+    quality = "structured";
+  }
 
   return {
-    avg_heart_rate_bpm: round(avgHR, 0),
-    max_heart_rate_bpm: hr ? Math.round(hr.max) : null,
-    min_heart_rate_bpm: hr ? Math.round(hr.min) : null,
+    avg_heart_rate_bpm: round(avgCoreHR, 0),
+    max_heart_rate_bpm: coreHR ? Math.round(coreHR.max) : null,
+    min_heart_rate_bpm: coreHR ? Math.round(coreHR.min) : null,
 
-    avg_pace_seconds_per_mile: round(pace, 1),
+    avg_pace_seconds_per_mile: round(corePace, 1),
 
-    avg_running_power_watts: round(avgPower, 1),
+    avg_running_power_watts: round(avgCorePower, 1),
+    // Peak power is a whole-workout signal (the stride burst) — keep it.
     max_running_power_watts: power ? Math.round(power.max) : null,
 
-    avg_running_speed_mps: round(avg(speed), 2),
-    avg_stride_length_m: round(avg(stride), 2),
-    avg_cadence_spm: round(cadence, 1),
-    avg_ground_contact_ms: round(avg(gct), 1),
-    avg_vertical_oscillation_cm: round(avg(vosc), 2),
+    avg_running_speed_mps: round(avg(coreSpeed), 2),
+    avg_stride_length_m: round(avg(coreStrideAgg), 2),
+    avg_cadence_spm: round(coreCadence, 1),
+    avg_ground_contact_ms: round(avg(coreGct), 1),
+    avg_vertical_oscillation_cm: round(avg(coreVosc), 2),
 
     elevation_gain_meters: elevGain !== null ? round(elevGain, 1) : null,
     elevation_loss_meters: elevLoss !== null ? round(elevLoss, 1) : null,
 
-    hr_to_power_ratio: round(hrToPower, 3),
+    hr_to_power_ratio: round(hrToPowerCore, 3),
     first_half: firstHalf,
     second_half: secondHalf,
     drift,
@@ -338,8 +531,20 @@ export function computeSummary(args: {
     workout_type: workoutType,
     workout_type_confidence: round(confidence, 2),
 
-    run_quality: runQuality?.quality ?? null,
-    run_quality_reasons: runQuality?.reasons ?? [],
+    run_quality: quality,
+    run_quality_reasons: qualityReasons,
+
+    workout_structure: structure,
+    has_strides: structure?.has_strides ?? false,
+    planned_workout_type: plannedType,
+    full_workout_summary: structure
+      ? {
+          avg_heart_rate_bpm: round(avgHR, 0),
+          avg_pace_seconds_per_mile: round(pace, 1),
+          avg_running_power_watts: round(avgPower, 1),
+          hr_to_power_ratio: round(hrToPowerFull, 3),
+        }
+      : null,
   };
 }
 
