@@ -14,6 +14,21 @@ public protocol SyncManagerProtocol: AnyObject {
     /// Publisher for sync status updates
     var syncStatusPublisher: AnyPublisher<SyncStatus, Never> { get }
 
+    /// Publisher for the tri-domain (configs / settings / history) watch-sync snapshot.
+    /// Reflects a true "fully synced" state using a dirty-latch model: a domain is
+    /// only "synced" while the peer has confirmed the current content and no local
+    /// change has happened since.
+    var syncSnapshotPublisher: AnyPublisher<WatchSyncSnapshot, Never> { get }
+
+    /// Force a full resync of every domain (configs, settings, entitlements, and —
+    /// on the watch — pending run history). Invoked when the user taps the status icon.
+    func forceFullResync()
+
+    /// Set the watch's local count of unsynced workouts. Drives the history domain of
+    /// the snapshot on watchOS and is echoed to the phone via a `historyStatus` message.
+    /// On iOS this is a no-op for local state.
+    func setLocalHistoryPending(_ count: Int)
+
     /// Send configuration to counterpart device
     /// - Parameter configuration: Run configuration to sync
     func syncConfiguration(_ configuration: RunConfiguration)
@@ -84,4 +99,48 @@ public enum SyncStatus: Equatable {
     case synced           // Confirmed delivered (got ack from counterpart)
     case queued           // Queued via transferUserInfo (watch not reachable)
     case failed(String)
+}
+
+/// Connection state of the counterpart Apple Watch / iPhone.
+public enum WatchConnection: Equatable {
+    /// No paired watch, or the watch app is not installed (iOS only).
+    case noWatch
+    /// Paired + installed, but the counterpart is not currently reachable.
+    case notReachable
+    /// Counterpart is reachable right now.
+    case reachable
+}
+
+/// A snapshot of the tri-domain watch-sync state (configs, settings, history)
+/// plus connection and in-flight/error status. Drives the status indicator UI.
+///
+/// Uses a dirty-latch model: each `*Synced` flag is true only while the peer has
+/// confirmed the exact current content (matching fingerprint) and no local change
+/// has invalidated it since.
+public struct WatchSyncSnapshot: Equatable {
+    public var connection: WatchConnection
+    public var configsSynced: Bool
+    public var settingsSynced: Bool
+    public var historySynced: Bool
+    public var isSyncing: Bool
+    public var lastError: String?
+
+    /// True only when all three domains are confirmed synced.
+    public var isFullySynced: Bool { configsSynced && settingsSynced && historySynced }
+
+    public init(
+        connection: WatchConnection = .notReachable,
+        configsSynced: Bool = false,
+        settingsSynced: Bool = false,
+        historySynced: Bool = false,
+        isSyncing: Bool = false,
+        lastError: String? = nil
+    ) {
+        self.connection = connection
+        self.configsSynced = configsSynced
+        self.settingsSynced = settingsSynced
+        self.historySynced = historySynced
+        self.isSyncing = isSyncing
+        self.lastError = lastError
+    }
 }

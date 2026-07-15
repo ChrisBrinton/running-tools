@@ -4,6 +4,7 @@ import PaceRunnerShared
 /// Top-level Run tab — handles config selection and launches workouts on iPhone
 struct iOSRunTabView: View {
     @ObservedObject var configurationStore: ConfigurationStore
+    @ObservedObject var syncStatusModel: WatchSyncStatusModel
     let workoutManager: WorkoutManagerProtocol
     let syncManager: SyncManagerProtocol
     @EnvironmentObject var entitlementManager: EntitlementManager
@@ -60,6 +61,11 @@ struct iOSRunTabView: View {
             }
         }
         .navigationTitle("Start a Run")
+        .toolbar {
+            ToolbarItem(placement: .topBarTrailing) {
+                WatchSyncStatusView(model: syncStatusModel)
+            }
+        }
     }
 
     private func configRow(_ config: RunConfiguration) -> some View {

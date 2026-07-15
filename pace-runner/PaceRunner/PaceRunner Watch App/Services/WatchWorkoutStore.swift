@@ -93,7 +93,16 @@ final class WatchWorkoutStore: ObservableObject {
                 self?.syncedIDs = []
                 UserDefaults.standard.removeObject(forKey: Self.summariesKey)
                 UserDefaults.standard.removeObject(forKey: Self.syncedIDsKey)
+                self?.reportPendingHistory()
                 print("[WatchWorkoutStore] Reset all data")
+            }
+            .store(in: &cancellables)
+
+        // Listen for a forced full resync request (user tapped the status icon)
+        NotificationCenter.default.publisher(for: .forceResyncRequested)
+            .receive(on: DispatchQueue.main)
+            .sink { [weak self] _ in
+                self?.retryPendingSyncs()
             }
             .store(in: &cancellables)
 
@@ -102,7 +111,16 @@ final class WatchWorkoutStore: ObservableObject {
             self?.retryPendingSyncs()
         }
 
+        // Seed the sync manager with our current pending-history count.
+        reportPendingHistory()
+
         print("\(logPrefix) Initialized: \(summaries.count) stored, \(unsyncedSummaries.count) unsynced")
+    }
+
+    /// Push the current unsynced-workout count into the SyncManager so the
+    /// tri-domain snapshot (and the phone) can reflect history-sync state.
+    private func reportPendingHistory() {
+        syncManager.setLocalHistoryPending(unsyncedSummaries.count)
     }
 
     // MARK: - Public API
@@ -122,6 +140,7 @@ final class WatchWorkoutStore: ObservableObject {
         if !summaries.contains(where: { $0.id == lean.id }) {
             summaries.insert(lean, at: 0)
             persistSummaries()
+            reportPendingHistory()
             print("\(logPrefix) Saved workout locally (debug log stripped): \(lean.id)")
         }
 
@@ -134,6 +153,7 @@ final class WatchWorkoutStore: ObservableObject {
     func markAsSynced(_ id: UUID) {
         syncedIDs.insert(id)
         persistSyncedIDs()
+        reportPendingHistory()
         print("\(logPrefix) Marked as synced: \(id)")
     }
 
@@ -188,6 +208,7 @@ final class WatchWorkoutStore: ObservableObject {
         syncedIDs.remove(summary.id)
         persistSummaries()
         persistSyncedIDs()
+        reportPendingHistory()
     }
 
     /// Deletes workouts that have been synced and are older than the given date.

@@ -32,6 +32,7 @@ struct PaceRunnerApp: App {
     @StateObject private var configurationStore: ConfigurationStore
     @StateObject private var historyStore: WorkoutHistoryStore
     @StateObject private var entitlementManager = EntitlementManager()
+    @StateObject private var syncStatusModel: WatchSyncStatusModel
 
     init() {
         // Suppress iOS NavigationBar constraint warnings (iOS 17 system bug)
@@ -87,6 +88,9 @@ struct PaceRunnerApp: App {
         _historyStore = StateObject(
             wrappedValue: WorkoutHistoryStore(syncManager: syncManager)
         )
+        _syncStatusModel = StateObject(
+            wrappedValue: WatchSyncStatusModel(syncManager: syncManager)
+        )
     }
 
     var body: some Scene {
@@ -94,6 +98,7 @@ struct PaceRunnerApp: App {
             TabView {
                 iOSRunTabView(
                     configurationStore: configurationStore,
+                    syncStatusModel: syncStatusModel,
                     workoutManager: workoutManager,
                     syncManager: syncManager
                 )

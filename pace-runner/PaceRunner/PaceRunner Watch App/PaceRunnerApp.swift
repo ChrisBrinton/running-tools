@@ -15,6 +15,7 @@ struct PaceRunner_Watch_AppApp: App {
     @StateObject private var configurationStore: ConfigurationStore
     @StateObject private var workoutStore: WatchWorkoutStore
     @StateObject private var entitlementManager = EntitlementManager()
+    @StateObject private var syncStatusModel: WatchSyncStatusModel
 
     init() {
         // Cap retained debug logs so Caches/debugLogs/ can't grow unbounded.
@@ -37,6 +38,7 @@ struct PaceRunner_Watch_AppApp: App {
         )
         _configurationStore = StateObject(wrappedValue: ConfigurationStore(syncManager: syncManager))
         _workoutStore = StateObject(wrappedValue: WatchWorkoutStore(syncManager: syncManager))
+        _syncStatusModel = StateObject(wrappedValue: WatchSyncStatusModel(syncManager: syncManager))
     }
 
     var body: some Scene {
@@ -67,7 +69,7 @@ struct PaceRunner_Watch_AppApp: App {
                         }
                     )
                 } else {
-                    ConfigurationSelectionView(store: configurationStore, workoutStore: workoutStore, syncManager: syncManager)
+                    ConfigurationSelectionView(store: configurationStore, workoutStore: workoutStore, syncManager: syncManager, syncStatusModel: syncStatusModel)
                 }
             }
             .environmentObject(entitlementManager)

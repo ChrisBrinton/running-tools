@@ -20,7 +20,6 @@ struct ConfigurationListView: View {
     @State private var showingNewConfiguration = false
     @State private var configurationToEdit: RunConfiguration?
     @State private var isEditMode = false
-    @State private var showingSyncProgress = false
 
     var body: some View {
         NavigationStack {
@@ -34,18 +33,6 @@ struct ConfigurationListView: View {
             .navigationTitle("Run Configurations")
             .environment(\.editMode, isEditMode ? .constant(.active) : .constant(.inactive))
             .toolbar {
-                ToolbarItem(placement: .topBarLeading) {
-                    HStack(spacing: 12) {
-                        syncStatusIndicator
-                        Button {
-                            showingSyncProgress = true
-                            store.forceSyncToWatch()
-                        } label: {
-                            Label("Sync to Watch", systemImage: "arrow.triangle.2.circlepath")
-                        }
-                        .disabled(store.syncStatus == .syncing)
-                    }
-                }
                 ToolbarItem(placement: .topBarTrailing) {
                     HStack(spacing: 16) {
                         Button {
@@ -72,14 +59,6 @@ struct ConfigurationListView: View {
                     store: store,
                     configuration: configuration
                 )
-            }
-            .sheet(isPresented: $showingSyncProgress) {
-                SyncProgressSheet(
-                    configCount: store.configurations.count,
-                    status: store.syncStatus,
-                    onDismiss: { showingSyncProgress = false }
-                )
-                .presentationDetents([.medium])
             }
         }
     }
@@ -144,30 +123,6 @@ struct ConfigurationListView: View {
         }
     }
 
-    private var syncStatusIndicator: some View {
-        Group {
-            switch store.syncStatus {
-            case .notActivated:
-                Image(systemName: "applewatch.slash")
-                    .foregroundStyle(.gray)
-            case .activated:
-                Image(systemName: "applewatch")
-                    .foregroundStyle(.secondary)
-            case .syncing:
-                ProgressView()
-            case .synced:
-                Image(systemName: "checkmark.applewatch")
-                    .foregroundStyle(.green)
-            case .queued:
-                Image(systemName: "arrow.clockwise.applewatch")
-                    .foregroundStyle(.orange)
-            case .failed:
-                Image(systemName: "exclamationmark.applewatch")
-                    .foregroundStyle(.red)
-            }
-        }
-        .font(.title3)
-    }
 }
 
 // MARK: - Configuration Row

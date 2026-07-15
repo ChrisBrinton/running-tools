@@ -29,11 +29,33 @@ public class SyncManager: NSObject, SyncManagerProtocol {
         syncStatusSubject.eraseToAnyPublisher()
     }
 
+    private let snapshotSubject = CurrentValueSubject<WatchSyncSnapshot, Never>(WatchSyncSnapshot())
+    public var syncSnapshotPublisher: AnyPublisher<WatchSyncSnapshot, Never> {
+        snapshotSubject.eraseToAnyPublisher()
+    }
+
     // MARK: - Private Properties
 
     private let session: WCSession?
     private let encoder = JSONEncoder()
     private let decoder = JSONDecoder()
+
+    // MARK: - Tri-domain sync state (dirty-latch fingerprints)
+
+    /// Serializes access to the fingerprint / snapshot state below.
+    private let snapshotLock = NSLock()
+
+    private var localConfigsFP: String?
+    private var lastAckedConfigsFP: String?
+    private var localSettingsFP: String?
+    private var lastAckedSettingsFP: String?
+    /// Watch's own count of unsynced workouts (watchOS only source of truth).
+    private var localHistoryPending: Int = 0
+    /// Phone's view of the watch's pending-workout count (iOS only; nil = unknown).
+    private var peerHistoryPending: Int?
+    private var isSyncingFlag: Bool = false
+    private var lastErrorText: String?
+    private var statusMirror: AnyCancellable?
 
     // Message types
     private enum MessageType: String {
@@ -41,6 +63,8 @@ public class SyncManager: NSObject, SyncManagerProtocol {
         case configurationDelete = "configurationDelete"
         case configurationSyncAll = "configurationSyncAll"
         case settingsSync = "settingsSync"
+        case settingsSyncAck = "settingsSyncAck"
+        case historyStatus = "historyStatus"
         case workoutSummary = "workoutSummary"
         case requestPendingWorkouts = "requestPendingWorkouts"
         case workoutSyncAck = "workoutSyncAck"
@@ -68,9 +92,209 @@ public class SyncManager: NSObject, SyncManagerProtocol {
 
         // Set delegate
         session?.delegate = self
+
+        // Mirror the coarse sync-status stream into the snapshot's error field:
+        // a `.failed` surfaces the red "Sync failed" state; any subsequent
+        // success (`.synced` / `.activated`) clears it. This is the only writer
+        // of `lastErrorText`, so the error state can't get permanently stuck.
+        statusMirror = syncStatusSubject.sink { [weak self] status in
+            guard let self else { return }
+            self.snapshotLock.lock()
+            switch status {
+            case .failed(let message): self.lastErrorText = message
+            case .synced, .activated: self.lastErrorText = nil
+            default: break
+            }
+            self.snapshotLock.unlock()
+            self.recomputeSnapshot()
+        }
+    }
+
+    // MARK: - Fingerprints (deterministic, cross-device stable)
+
+    /// FNV-1a 64-bit hash of a canonical string, rendered as a lowercase hex string.
+    /// Deterministic across launches and devices (unlike Swift's `.hashValue`).
+    private func fnv1a64Hex(_ string: String) -> String {
+        let prime: UInt64 = 0x0000_0100_0000_01B3
+        var hash: UInt64 = 0xcbf2_9ce4_8422_2325
+        for byte in string.utf8 {
+            hash ^= UInt64(byte)
+            hash = hash &* prime
+        }
+        return String(hash, radix: 16)
+    }
+
+    /// Canonical, stable fingerprint of a set of configurations.
+    /// Sorted by id so order changes on either device don't matter for equivalence.
+    private func configsFingerprint(_ configurations: [RunConfiguration]) -> String {
+        let lines = configurations
+            .sorted { $0.id.uuidString < $1.id.uuidString }
+            .map { config -> String in
+                let paces = config.milePaces.map { String($0.totalSeconds) }.joined(separator: ",")
+                let stride = config.strideLengthInches.map { String($0) } ?? "nil"
+                let cal = config.paceCalibrationSeconds.map { String($0) } ?? "nil"
+                let segs: String
+                if let segments = config.segments {
+                    segs = segments.map { seg in
+                        let sStride = seg.strideLengthInches.map { String($0) } ?? "nil"
+                        let sCal = seg.paceCalibrationSeconds.map { String($0) } ?? "nil"
+                        return "\(seg.id.uuidString)|\(seg.distance.miles)|\(seg.pace.totalSeconds)|\(seg.label)|\(seg.cadenceOffset)|\(seg.paceTolerance)|\(sStride)|\(sCal)"
+                    }.joined(separator: ";")
+                } else {
+                    segs = "nil"
+                }
+                return [
+                    config.id.uuidString,
+                    config.name,
+                    String(config.distance.miles),
+                    paces,
+                    String(config.cadenceOffset),
+                    String(config.paceTolerance),
+                    String(config.metronomeMinVolume),
+                    String(config.metronomeMaxVolume),
+                    String(config.autoEndRun),
+                    stride,
+                    cal,
+                    segs
+                ].joined(separator: "|")
+            }
+        return fnv1a64Hex(lines.joined(separator: "\n"))
+    }
+
+    /// Canonical, stable fingerprint of app settings. Fixed field order.
+    private func settingsFingerprint(_ settings: AppSettings) -> String {
+        let commonDistances = settings.commonDistances.map { String($0) }.joined(separator: ",")
+        let namedPaces = settings.namedPaces.map { "\($0.name):\($0.pace.totalSeconds)" }.joined(separator: ",")
+        let fields: [String] = [
+            String(settings.companionMode),
+            String(settings.useHealthKitDistance),
+            String(settings.audioBeatsEnabled),
+            String(settings.voiceAlertsEnabled),
+            String(settings.alertThrottleInterval),
+            String(settings.adaptiveMetronomeVolume),
+            String(settings.masterVolume),
+            String(settings.beatVolume),
+            String(settings.announceMileMarkers),
+            String(settings.debugProOverride),
+            String(settings.gpsFilterDebugSounds),
+            String(settings.verboseGPSLogging),
+            settings.distanceCalcMethod.rawValue,
+            String(settings.emphasisBeatEnabled),
+            String(settings.emphasisBeatInterval),
+            String(settings.useMetricUnits),
+            String(settings.showPaceDeviation),
+            String(settings.showCadence),
+            String(settings.fastAverageSeconds),
+            String(settings.mediumAverageSeconds),
+            String(settings.slowAverageMiles),
+            String(settings.strideLengthInches),
+            String(settings.paceCalibrationSeconds),
+            String(settings.defaultTolerance),
+            commonDistances,
+            namedPaces
+        ]
+        return fnv1a64Hex(fields.joined(separator: "|"))
+    }
+
+    // MARK: - Snapshot
+
+    /// Recompute the tri-domain snapshot from current state and emit it.
+    /// Safe to call from any thread.
+    private func recomputeSnapshot() {
+        snapshotLock.lock()
+
+        let configsSynced = lastAckedConfigsFP != nil && lastAckedConfigsFP == localConfigsFP
+        let settingsSynced = lastAckedSettingsFP != nil && lastAckedSettingsFP == localSettingsFP
+
+        #if os(watchOS)
+        let historySynced = localHistoryPending == 0
+        #else
+        let historySynced = (peerHistoryPending == 0)
+        #endif
+
+        let connection = currentConnection()
+
+        let snapshot = WatchSyncSnapshot(
+            connection: connection,
+            configsSynced: configsSynced,
+            settingsSynced: settingsSynced,
+            historySynced: historySynced,
+            isSyncing: isSyncingFlag,
+            lastError: lastErrorText
+        )
+        snapshotLock.unlock()
+
+        snapshotSubject.send(snapshot)
+    }
+
+    /// Compute the current connection state for this platform.
+    private func currentConnection() -> WatchConnection {
+        guard let session = session else { return .noWatch }
+        #if os(iOS)
+        if !session.isPaired || !session.isWatchAppInstalled {
+            return .noWatch
+        }
+        return session.isReachable ? .reachable : .notReachable
+        #else
+        return session.isReachable ? .reachable : .notReachable
+        #endif
+    }
+
+    private func setSyncing(_ syncing: Bool) {
+        snapshotLock.lock()
+        isSyncingFlag = syncing
+        snapshotLock.unlock()
+        recomputeSnapshot()
     }
 
     // MARK: - Public Methods
+
+    public func setLocalHistoryPending(_ count: Int) {
+        snapshotLock.lock()
+        let changed = localHistoryPending != count
+        localHistoryPending = count
+        snapshotLock.unlock()
+
+        #if os(watchOS)
+        if changed {
+            sendHistoryStatus(count)
+        }
+        #endif
+        recomputeSnapshot()
+    }
+
+    /// Force a full resync of every domain. Tapped status icon calls this.
+    public func forceFullResync() {
+        setSyncing(true)
+
+        // Push configs + settings + entitlements from local storage.
+        let configs = loadConfigurations()
+        syncAllConfigurations(configs)
+
+        let settings = AppSettings.load()
+        syncSettings(settings)
+
+        let isPro = UserDefaults.standard.bool(forKey: "entitlement_is_pro")
+        syncEntitlements(isPro: isPro)
+
+        #if os(watchOS)
+        // Re-broadcast history status and retry any pending workouts.
+        snapshotLock.lock()
+        let pending = localHistoryPending
+        snapshotLock.unlock()
+        sendHistoryStatus(pending)
+        NotificationCenter.default.post(name: .forceResyncRequested, object: nil)
+        #else
+        // Ask the watch to send its data (configs/settings/workouts) too.
+        requestAllData()
+        #endif
+
+        // Clear the syncing flag after a short window; acks will refresh the
+        // per-domain latches as they arrive.
+        DispatchQueue.main.asyncAfter(deadline: .now() + 3.0) { [weak self] in
+            self?.setSyncing(false)
+        }
+    }
 
     public func activate() {
         guard let session = session else {
@@ -127,12 +351,21 @@ public class SyncManager: NSObject, SyncManagerProtocol {
 
         print("\(loggerPrefix) syncAllConfigurations: syncing \(configurations.count) configs")
 
+        // Record the local fingerprint for the dirty-latch model. This is the
+        // full-set fingerprint the receiver will ack.
+        let fp = configsFingerprint(configurations)
+        snapshotLock.lock()
+        localConfigsFP = fp
+        snapshotLock.unlock()
+        recomputeSnapshot()
+
         do {
             let configData = try encoder.encode(configurations)
 
             let message: [String: Any] = [
                 "type": MessageType.configurationSyncAll.rawValue,
-                "data": configData
+                "data": configData,
+                "fingerprint": fp
             ]
 
             // Use sendReliably for immediate + queued delivery
@@ -167,13 +400,21 @@ public class SyncManager: NSObject, SyncManagerProtocol {
             return
         }
 
+        // Record the local fingerprint for the dirty-latch model.
+        let fp = configsFingerprint(configurations)
+        snapshotLock.lock()
+        localConfigsFP = fp
+        snapshotLock.unlock()
+        recomputeSnapshot()
+
         guard session.isReachable else {
             // Not reachable — still queue it, but tell the user
             do {
                 let configData = try encoder.encode(configurations)
                 let message: [String: Any] = [
                     "type": MessageType.configurationSyncAll.rawValue,
-                    "data": configData
+                    "data": configData,
+                    "fingerprint": fp
                 ]
                 session.transferUserInfo(message)
                 try session.updateApplicationContext(message)
@@ -188,7 +429,8 @@ public class SyncManager: NSObject, SyncManagerProtocol {
             let configData = try encoder.encode(configurations)
             let message: [String: Any] = [
                 "type": MessageType.configurationSyncAll.rawValue,
-                "data": configData
+                "data": configData,
+                "fingerprint": fp
             ]
 
             var completed = false
@@ -320,12 +562,20 @@ public class SyncManager: NSObject, SyncManagerProtocol {
 
         print("\(loggerPrefix) syncSettings: syncing settings")
 
+        // Record the local settings fingerprint for the dirty-latch model.
+        let fp = settingsFingerprint(settings)
+        snapshotLock.lock()
+        localSettingsFP = fp
+        snapshotLock.unlock()
+        recomputeSnapshot()
+
         do {
             let settingsData = try encoder.encode(settings)
 
             let message: [String: Any] = [
                 "type": MessageType.settingsSync.rawValue,
-                "data": settingsData
+                "data": settingsData,
+                "fingerprint": fp
             ]
 
             sendReliably(message, label: "syncSettings")
@@ -620,6 +870,17 @@ extension SyncManager: WCSessionDelegate {
         } else {
             syncStatusSubject.send(.activated)
         }
+        recomputeSnapshot()
+
+        #if os(watchOS)
+        // On activation, tell the phone our current pending-history count.
+        snapshotLock.lock()
+        let pending = localHistoryPending
+        snapshotLock.unlock()
+        if session.isReachable {
+            sendHistoryStatus(pending)
+        }
+        #endif
     }
 
     #if os(iOS)
@@ -631,19 +892,35 @@ extension SyncManager: WCSessionDelegate {
         // iOS only - reactivate for new watch
         session.activate()
     }
+
+    public func sessionWatchStateDidChange(_ session: WCSession) {
+        // Pairing / installed / complication state changed — connection may change.
+        print("\(loggerPrefix) sessionWatchStateDidChange: paired=\(session.isPaired) installed=\(session.isWatchAppInstalled)")
+        recomputeSnapshot()
+    }
     #endif
 
     public func sessionReachabilityDidChange(_ session: WCSession) {
-        // Reachability changed - sync status may update
+        // Reachability changed - sync status and connection may update
         if session.isReachable {
             print("\(loggerPrefix) sessionReachabilityDidChange: now reachable")
             syncStatusSubject.send(.activated)
 
             // Post notification for WatchWorkoutStore to retry pending syncs
             NotificationCenter.default.post(name: .watchConnectivityReachable, object: nil)
+
+            #if os(watchOS)
+            // Re-report pending history now that we can reach the phone.
+            snapshotLock.lock()
+            let pending = localHistoryPending
+            snapshotLock.unlock()
+            sendHistoryStatus(pending)
+            #endif
         } else {
             print("\(loggerPrefix) sessionReachabilityDidChange: not reachable")
         }
+        // Update the connection domain of the snapshot in BOTH directions.
+        recomputeSnapshot()
     }
 
     // MARK: - Message Receiving
@@ -718,6 +995,12 @@ extension SyncManager: WCSessionDelegate {
         case .settingsSync:
             handleSettingsSync(message)
 
+        case .settingsSyncAck:
+            handleSettingsSyncAck(message)
+
+        case .historyStatus:
+            handleHistoryStatus(message)
+
         case .workoutSummary:
             handleWorkoutSummaryMessage(message)
 
@@ -763,8 +1046,10 @@ extension SyncManager: WCSessionDelegate {
                 object: configuration
             )
 
-            // Send ack back to sender
-            sendConfigSyncAck(configCount: 1)
+            // Ack with the fingerprint of the full stored set after applying the
+            // single update, so full-set latching stays consistent.
+            let fp = configsFingerprint(loadConfigurations())
+            sendConfigSyncAck(configCount: 1, fingerprint: fp)
 
         } catch {
             print("\(loggerPrefix) Failed to decode configuration: \(error)")
@@ -812,8 +1097,19 @@ extension SyncManager: WCSessionDelegate {
             )
             print("\(loggerPrefix) handleConfigurationSyncAll: posted notification")
 
-            // Send ack back to sender
-            sendConfigSyncAck(configCount: configurations.count)
+            // The received configs are now our local set — adopt the sender's
+            // fingerprint (recomputed from the decoded configs, which is
+            // deterministic and matches the sender) so this side also latches
+            // as synced once it acks/receives.
+            let receivedFP = configsFingerprint(configurations)
+            snapshotLock.lock()
+            localConfigsFP = receivedFP
+            lastAckedConfigsFP = receivedFP
+            snapshotLock.unlock()
+            recomputeSnapshot()
+
+            // Send ack back to sender, including the fingerprint of what we saved.
+            sendConfigSyncAck(configCount: configurations.count, fingerprint: receivedFP)
 
         } catch {
             print("\(loggerPrefix) handleConfigurationSyncAll: Failed to decode configurations: \(error)")
@@ -843,9 +1139,40 @@ extension SyncManager: WCSessionDelegate {
             )
             print("\(loggerPrefix) handleSettingsSync: posted notification")
 
+            // Latch our local settings fingerprint to the received settings and
+            // ack it back so the sender can mark the settings domain as synced.
+            let receivedFP = settingsFingerprint(settings)
+            snapshotLock.lock()
+            localSettingsFP = receivedFP
+            lastAckedSettingsFP = receivedFP
+            snapshotLock.unlock()
+            recomputeSnapshot()
+
+            sendSettingsSyncAck(fingerprint: receivedFP)
+
         } catch {
             print("\(loggerPrefix) handleSettingsSync: Failed to decode settings: \(error)")
         }
+    }
+
+    private func handleSettingsSyncAck(_ message: [String: Any]) {
+        guard let fp = message["fingerprint"] as? String else { return }
+        print("\(loggerPrefix) handleSettingsSyncAck: peer confirmed settings fp=\(fp)")
+        snapshotLock.lock()
+        lastAckedSettingsFP = fp
+        snapshotLock.unlock()
+        recomputeSnapshot()
+    }
+
+    private func handleHistoryStatus(_ message: [String: Any]) {
+        #if os(iOS)
+        guard let pending = message["pendingCount"] as? Int else { return }
+        print("\(loggerPrefix) handleHistoryStatus: watch reports \(pending) pending workouts")
+        snapshotLock.lock()
+        peerHistoryPending = pending
+        snapshotLock.unlock()
+        recomputeSnapshot()
+        #endif
     }
 
     private func handleWorkoutSummaryMessage(_ message: [String: Any]) {
@@ -939,28 +1266,57 @@ extension SyncManager: WCSessionDelegate {
         )
     }
 
-    private func sendConfigSyncAck(configCount: Int) {
+    private func sendConfigSyncAck(configCount: Int, fingerprint: String) {
+        let payload: [String: Any] = [
+            "type": MessageType.configSyncAck.rawValue,
+            "count": configCount,
+            "fingerprint": fingerprint
+        ]
         guard let session = session, session.isReachable else {
             // If not reachable, queue the ack
-            if let session = session {
-                session.transferUserInfo([
-                    "type": MessageType.configSyncAck.rawValue,
-                    "count": configCount
-                ])
-            }
+            session?.transferUserInfo(payload)
             return
         }
-
-        session.sendMessage([
-            "type": MessageType.configSyncAck.rawValue,
-            "count": configCount
-        ], replyHandler: nil, errorHandler: nil)
+        session.sendMessage(payload, replyHandler: nil, errorHandler: nil)
     }
 
     private func handleConfigSyncAck(_ message: [String: Any]) {
         let count = message["count"] as? Int ?? 0
-        print("\(loggerPrefix) handleConfigSyncAck: watch confirmed \(count) configs received")
+        print("\(loggerPrefix) handleConfigSyncAck: peer confirmed \(count) configs received")
+        // Backward-compat: keep the .synced SyncStatus behavior.
         syncStatusSubject.send(.synced)
+
+        if let fp = message["fingerprint"] as? String {
+            snapshotLock.lock()
+            lastAckedConfigsFP = fp
+            snapshotLock.unlock()
+            recomputeSnapshot()
+        }
+    }
+
+    private func sendSettingsSyncAck(fingerprint: String) {
+        let payload: [String: Any] = [
+            "type": MessageType.settingsSyncAck.rawValue,
+            "fingerprint": fingerprint
+        ]
+        guard let session = session, session.isReachable else {
+            session?.transferUserInfo(payload)
+            return
+        }
+        session.sendMessage(payload, replyHandler: nil, errorHandler: nil)
+    }
+
+    /// Watch → phone: report the current unsynced-workout count.
+    private func sendHistoryStatus(_ pendingCount: Int) {
+        let payload: [String: Any] = [
+            "type": MessageType.historyStatus.rawValue,
+            "pendingCount": pendingCount
+        ]
+        guard let session = session, session.isReachable else {
+            session?.transferUserInfo(payload)
+            return
+        }
+        session.sendMessage(payload, replyHandler: nil, errorHandler: nil)
     }
 
     private func handleDebugLog(_ message: [String: Any]) {
@@ -1174,4 +1530,7 @@ extension Notification.Name {
     public static let resetAllReceived = Notification.Name("resetAllReceived")
     public static let allDataRequested = Notification.Name("allDataRequested")
     public static let watchDebugLogReceived = Notification.Name("watchDebugLogReceived")
+    /// Posted on the watch when the user forces a full resync; WatchWorkoutStore
+    /// listens to retry pending workout syncs.
+    public static let forceResyncRequested = Notification.Name("forceResyncRequested")
 }

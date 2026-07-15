@@ -5,6 +5,7 @@ struct ConfigurationSelectionView: View {
     @ObservedObject var store: ConfigurationStore
     @ObservedObject var workoutStore: WatchWorkoutStore
     let syncManager: SyncManagerProtocol
+    @ObservedObject var syncStatusModel: WatchSyncStatusModel
     @EnvironmentObject var entitlementManager: EntitlementManager
     @State private var showingVolumeTest = false
     @State private var showingProAlert = false
@@ -36,6 +37,10 @@ struct ConfigurationSelectionView: View {
 
     var body: some View {
         List {
+            Section {
+                WatchSyncStatusView(model: syncStatusModel)
+            }
+
             ForEach(store.configurations, id: \.id) { config in
                 Button {
                     if config.requiresPro && !entitlementManager.isPro {

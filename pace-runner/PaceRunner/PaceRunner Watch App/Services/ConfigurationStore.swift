@@ -73,7 +73,11 @@ final class ConfigurationStore: ObservableObject {
         removeSampleIfNeeded()
         configurations.append(configuration)
         saveConfigurations()
+        // Send the single-update message (keeps existing incremental path working)
+        // AND a full-set sync so the dirty-latch fingerprint stays a full-set
+        // fingerprint that the phone will ack.
         syncManager.syncConfiguration(configuration)
+        syncManager.syncAllConfigurations(configurations)
     }
 
     /// Finds a configuration by name
