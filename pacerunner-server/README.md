@@ -52,12 +52,39 @@ in URLs.
 
 ### MCP (chat → server, requires an `mcp` token)
 JSON-RPC 2.0 at `POST /mcp`. Tools:
-- `list_workouts(since?, until?, activity_type?, limit?)` — directory with has_* flags including `has_weather`.
-- `get_workout(id, fields?)` — fields ⊆ `metadata, route_gpx, samples, events, pacerunner_log, weather`.
+- `list_workouts(since?, until?, activity_type?, limit?)` — directory with has_* flags including `has_weather`; each entry carries the derived `summary` object (see below).
+- `get_workout(id, fields?)` — fields ⊆ `metadata, route_gpx, samples, events, splits, pacerunner_log, weather`. `id` is the FULL HealthKit UUID (not a prefix). `metadata.summary` is always present.
 - `get_pacerunner_log(workout_id)` — accepts HK or PR UUID.
 - `get_weather(workout_id)` — temp, humidity, wind, precipitation, PM2.5/PM10/US AQI.
+- `get_weekly_summaries(since?, until?)` — ISO-week rollups: mileage, run count, distance-weighted avg pace/HR/power/hr_to_power, longest run, elevation, weather, a `workout_breakdown` by type, a `run_quality_breakdown` (clean/degraded/aborted/structured), and `clean_only_*` averages that drop degraded/aborted runs (structured runs are kept, since their metrics are core-phase-only) for cleaner week-over-week trends.
 - `list_configurations()`
 - `get_settings()`
+
+## Derived analytics (the `summary` blob)
+
+Computed on the write path (`src/summary.ts`, with `src/splits.ts` +
+`src/structure.ts`) and stored as JSON on the workout row, so cross-workout
+trend questions don't paginate raw samples. Every field is nullable. Key pieces:
+
+- **Per-mile splits** (from the GPX trace): pace, mean HR, mean power, elevation.
+- **Tier-1 derived metrics:** `first_half`/`second_half`, per-mile `drift`
+  (regression slopes), `split_variability` (pace/HR/power stdev),
+  `hr_to_power_ratio`.
+- **`workout_type`** — intent from the PaceRunner config name when present,
+  else an HR/pace/distance heuristic — plus `planned_workout_type` (always from
+  the config name, for planned-vs-actual).
+- **`run_quality`** — how the *execution* held together, independent of intent:
+  `clean` / `degraded` / `aborted`, or **`structured`** when the run has detected
+  structure (strides/tempo/intervals) so whole-workout flags aren't meaningful.
+- **`workout_structure`** — detected phases (warmup / steady / tempo / intervals
+  / strides / cooldown) with a `core_phase_index`. When present, the effort
+  metrics above are recomputed over the **core phase only** (e.g. an easy run
+  with strides reports the steady portion; a tempo session reports the tempo
+  block), and the whole-session numbers are preserved under `full_workout_summary`.
+
+After changing summary/structure logic and deploying, run
+`node dist/admin.js recompute-summaries` (in the container) to backfill all
+historical workouts — it's idempotent, so re-run freely after threshold tuning.
 
 ## Weather decoration
 

@@ -1,20 +1,45 @@
 # Repository Guidelines
 
-## Project Structure & Module Organization
-`pace-runner/PaceRunner` hosts the active Swift targets: Shared logic (`PaceRunner-Shared/`), phone UI (`PaceRunner/`), watch UI (`PaceRunner Watch App/`), and matching `*Tests`/`*UITests`. Project-wide resources such as mile split models, sync protocols, and watch services live in `PaceRunner-Shared/`. Long-form specifications stay in `docs/pace-runner/`, while executable research and planning artifacts live in `specs/001-pace-runner-mvp/` (SpecKit generates plans, tasks, and contracts there). `workout-sync-service/` is currently documentation-only; treat it as a future independent service boundary.
+Concise agent guide. For the full session bootstrap (project overview,
+per-component commands, gotchas, server access) read [`CLAUDE.md`](CLAUDE.md) first.
 
-## Build, Test, and Development Commands
-- `cd pace-runner/PaceRunner && xed PaceRunner.xcodeproj` — open the unified iOS/watchOS workspace in Xcode.
-- `cd pace-runner/PaceRunner && xcodebuild -scheme "PaceRunner" -destination 'platform=iOS Simulator,name=iPhone 15 Pro' build` — simulator build of both apps.
-- `xcodebuild test -scheme "PaceRunner-Shared" -destination 'platform=iOS Simulator,name=iPhone 15 Pro'` — run shared model/service tests headlessly.
-- `xcodebuild test -scheme "PaceRunner Watch App" -destination 'platform=watchOS Simulator,name=Apple Watch Series 9 (45mm)'` — verify watch targets plus WatchConnectivity contract tests.
-- `swiftlint` from repo root — required before every commit; the build script fails the build on lint warnings.
+## Project structure
 
-## Coding Style & Naming Conventions
-Swift 5.9+, 4-space indentation, and always-on strict linting (no force unwraps or unused code). Protocols end with `Protocol` (see `PaceRunner-Shared/Protocols/`), services stay in `Services/`, data models in `Models/`, and files mirror type names. Favor `struct` + `enum` immutability, dependency injection via protocols, and explicit `private`/`public`. Resource names follow PascalCase (`WorkoutSummary`, `RunConfiguration`), and tests mirror the type under test with `Tests` suffix.
+- `pace-runner/PaceRunner/PaceRunner.xcodeproj` — the iOS + watchOS app. Targets:
+  `PaceRunner/PaceRunner/` (iOS), `PaceRunner/PaceRunner Watch App/` (watchOS).
+  Shared model/service/protocol code is the **`PaceRunnerShared`** Swift package
+  (`pace-runner/PaceRunnerShared/Sources/PaceRunnerShared/…`).
+- `pacerunner-server/` — TypeScript analytics + MCP server (`src/…`), live and
+  deployed via Docker.
+- `docs/pace-runner/` — design docs (intent; verify against code). `specs/` +
+  `.specify/` — SpecKit artifacts. `workout-sync-service/` — superseded doc.
 
-## Testing Guidelines
-Constitution mandates TDD: write failing tests first, then code. Maintain exhaustive coverage for shared math/services (`PaceRunner-SharedTests/`), UI logic via ViewModel tests, and end-to-end flows via `PaceRunnerUITests` and `PaceRunner Watch AppUITests`. Contract tests already stub HealthKit, CoreLocation, AVFoundation, and WatchConnectivity—extend them when frameworks change. Before PR, run both simulator destinations plus on-device smoke tests (real iPhone + Apple Watch) and record findings inside the PR description.
+## Build, test, run
 
-## Commit & Pull Request Guidelines
-Use Conventional Commits (`feat: watch audio tempo engine`, `fix: healthkit exporter retry`) and keep commits atomic. Branch names follow `<issue#>-short-slug` (e.g., `042-gps-smoothing`). Every PR must include: summary of scope, specification references (`docs/pace-runner/...` or `specs/...`), screenshots or logs of simulator/device runs, `swiftlint` output, and confirmation that watch + phone tests passed offline. Note any constitution trade-offs explicitly; unresolved violations block merges.
+App (use these exact simulator names):
+- `cd pace-runner/PaceRunner && xcodebuild -project PaceRunner.xcodeproj -scheme PaceRunner -destination 'platform=iOS Simulator,name=iPhone 17' build`
+- `xcodebuild -project PaceRunner.xcodeproj -scheme 'PaceRunner Watch App' -destination 'platform=watchOS Simulator,name=Apple Watch SE 3 (44mm),OS=26.5' build`
+- Tests run via the app-target `PaceRunnerTests` (they `@testable import PaceRunnerShared`) on the `PaceRunner` scheme. **`swift test` fails on the host** (WatchConnectivity import) — don't use it.
+- SourceKit "No such module …" diagnostics are stale-indexer noise, not build errors. Don't run iOS + watch builds concurrently. `xcodebuild | tail` hides the exit code — grep for `BUILD SUCCEEDED`.
+
+Server:
+- `cd pacerunner-server && npm run build | npm run typecheck | npm test | npm run dev`.
+
+## Conventions
+
+- Swift 5.9+, protocols suffixed `Protocol`, services in `Services/`, models in
+  `Models/`; prefer `struct`/`enum` immutability and protocol-based DI. Match the
+  surrounding code's style.
+- **Build number:** on any app change bump `CURRENT_PROJECT_VERSION` +1 for the 4
+  highest entries (iOS + Watch app, Debug+Release) in `project.pbxproj`; leave the
+  8 entries at `1` (tests/widgets); never touch `MARKETING_VERSION`. Server-only
+  changes need no bump.
+- Sync/WatchConnectivity/HealthKit-background behavior can't be tested in the
+  simulator — verify on-device and say so.
+
+## Commits & PRs
+
+- Working branch `001-pace-runner-mvp`. Commit/push only when asked; ask before
+  pushing. Keep commits atomic with a clear summary of scope and how it was
+  verified (which targets built, tests run, what still needs on-device checks).
+- End commit messages with: `Co-Authored-By: Claude Opus 4.8 (1M context) <noreply@anthropic.com>`.

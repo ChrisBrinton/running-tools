@@ -25,7 +25,8 @@ docs/
 
 A native iOS and watchOS application for pace-guided marathon training.
 
-**Status**: Specification complete, implementation pending
+**Status**: Shipped (build 35). The design docs below are reference/intent —
+verify specifics against the code, which has moved beyond some of them.
 
 **Documentation**: [pace-runner/](pace-runner/)
 
@@ -39,13 +40,17 @@ A native iOS and watchOS application for pace-guided marathon training.
 - [Data Model](pace-runner/DATA-MODEL.md) - Data structures and persistence
 - [Sync Protocol](pace-runner/SYNC-PROTOCOL.md) - Phone-watch communication
 
-### Workout Sync Service
+### PaceRunner Server
 
-Cloud service + MCP server for workout analytics (planned).
+Always-on multi-user server that ingests workouts, derives analytics
+(splits, drift, run_quality, workout structure), decorates with weather, and
+serves per-user data over MCP. Live at `pacerunner.brintontech.com`.
 
-**Status**: Planned, not yet implemented
+**Status**: Shipped / live.
 
-**Documentation**: See [`../workout-sync-service/README.md`](../workout-sync-service/README.md)
+**Documentation**: See [`../pacerunner-server/README.md`](../pacerunner-server/README.md).
+(The earlier "Workout Sync Service" plan in `../workout-sync-service/` is
+superseded by this server.)
 
 ## Development Process
 

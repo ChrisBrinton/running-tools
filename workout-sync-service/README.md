@@ -1,10 +1,18 @@
 # Workout Sync Service
 
+> ⚠️ **SUPERSEDED — historical design doc only.** This "planned cloud service"
+> was implemented instead as [`../pacerunner-server/`](../pacerunner-server/)
+> (TypeScript + Hono + SQLite + MCP, live at `pacerunner.brintontech.com`), which
+> ingests workouts, derives analytics, and serves them over MCP. This directory
+> is kept for historical context; there is no code here and it is not built or
+> deployed. For anything current, see `pacerunner-server/README.md`.
+
 Cloud service and MCP server for aggregating workout data and providing AI-powered training insights through Claude Desktop.
 
 ## Status
 
-**PLANNED** - Not yet implemented
+**SUPERSEDED** — realized as `pacerunner-server/` (see banner above). The rest of
+this document is the original, unimplemented plan, retained for history.
 
 ## Overview
 

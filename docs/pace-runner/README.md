@@ -2,6 +2,12 @@
 
 A native iOS and WatchOS application for maintaining target pace during marathon training with audio tempo beats and real-time pace guidance.
 
+> **These are design/spec documents (intent).** The app is shipped and has
+> moved beyond some specifics here — verify against the code. Current build/test
+> and the actual project layout are in [`../../CLAUDE.md`](../../CLAUDE.md) and
+> [`../../pace-runner/README.md`](../../pace-runner/README.md). Post-workout
+> analytics live in [`../../pacerunner-server/`](../../pacerunner-server/).
+
 ## Project Overview
 
 PaceRunner helps runners maintain their target pace during training runs and races by providing:
@@ -28,21 +34,13 @@ Marathon runners who want precise pace control without constantly checking their
 
 ## Project Structure
 
+Actual layout (see `../../pace-runner/`):
 ```
-PaceRunner/
-├── PaceRunner-iOS/           # iPhone app
-│   ├── Models/              # Data models
-│   ├── Views/               # SwiftUI views
-│   ├── ViewModels/          # View models
-│   └── Services/            # Business logic
-├── PaceRunner-Watch/         # Watch app
-│   ├── Models/              # Data models
-│   ├── Views/               # SwiftUI views
-│   ├── ViewModels/          # View models
-│   └── Services/            # Business logic
-└── PaceRunner-Shared/        # Shared code
-    ├── Models/              # Shared data models
-    └── Extensions/          # Shared utilities
+pace-runner/
+├── PaceRunner/PaceRunner.xcodeproj
+│   ├── PaceRunner/              # iOS app target
+│   └── PaceRunner Watch App/    # watchOS app target
+└── PaceRunnerShared/            # Swift package: shared Models/Services/Protocols
 ```
 
 ## Specification Documents

@@ -1,5 +1,18 @@
 # Sync Protocol Specification
 
+> **Implementation note (current).** The live implementation is
+> `PaceRunnerShared/Sources/PaceRunnerShared/Services/SyncManager.swift`
+> (+ `Protocols/SyncManagerProtocol.swift`). Beyond this spec it now exposes a
+> **tri-domain sync snapshot** (`WatchSyncSnapshot`: configs / settings / history
+> + connection + syncing/error) using a **dirty-latch** model: each domain
+> carries a content fingerprint (FNV-1a), and is "synced" only while the peer has
+> acked the current fingerprint and no local change has happened since. Config
+> and settings syncs carry fingerprints and are acked bidirectionally; the watch
+> reports its unsynced-workout count (`historyStatus`) so history is "synced" at
+> count 0. A `WatchSyncStatusView` on both the phone Run tab and the watch
+> Workouts screen renders this (tap to force a full resync). Treat the sections
+> below as design background; verify against the code for specifics.
+
 ## Overview
 
 PaceRunner uses WatchConnectivity framework to synchronize data between iPhone and Apple Watch. The protocol is designed for reliability, handling both immediate and background transfers.
