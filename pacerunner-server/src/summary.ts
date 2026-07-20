@@ -14,6 +14,14 @@
  */
 
 import { detectWorkoutStructure, type WorkoutStructure } from "./structure.js";
+import {
+  pauseIntervalsFromEvents,
+  detectPauses,
+  totalPauseSeconds,
+  movingTimeForSplit,
+  type WorkoutEventInput,
+  type PauseEvent,
+} from "./pauses.js";
 
 const SECONDS_PER_MILE = 1609.344;
 
@@ -130,6 +138,25 @@ export interface WorkoutSummary {
    *  the full session. Null when no structure was detected (the top-level
    *  fields already ARE the whole workout in that case). */
   full_workout_summary: FullWorkoutSummary | null;
+
+  // -------- Mid-run pauses (bathroom / water / traffic) ------------------
+
+  /** Detected mid-run pause/resume interruptions. Empty array (never null)
+   *  when none. When present, the split-derived pace metrics above
+   *  (`split_variability`, `drift`, `first_half`/`second_half`) are computed on
+   *  MOVING time so a 5-minute restroom stop doesn't read as pace variability.
+   *  HR/power metrics are intentionally left on elapsed samples — HR really did
+   *  drop during the stop. See `pacerunner_pause_detection.md`. */
+  pause_events: PauseEvent[];
+
+  /** Moving time for the whole workout (paused time excluded). Equal to the
+   *  workout's `duration_seconds` (HKWorkout.duration is already moving time).
+   *  Null when duration is unknown. */
+  total_moving_duration_seconds: number | null;
+
+  /** Wall-clock time out (moving + all pauses) — "how long was I out." Equals
+   *  moving time when there were no pauses. Null when duration is unknown. */
+  total_elapsed_duration_seconds: number | null;
 }
 
 export interface FullWorkoutSummary {
@@ -347,6 +374,10 @@ export function computeSummary(args: {
    *  "5mi Easy"). When supplied, the classifier extracts user intent
    *  from the name instead of guessing from HR. */
   paceRunnerConfigName?: string | null;
+  /** Workout event stream (HK `pause`/`resume` markers among others). When
+   *  present, mid-run pauses are detected and the split-derived pace metrics
+   *  are computed on moving time. */
+  events?: WorkoutEventInput[];
 }): WorkoutSummary {
   const s = args.samples ?? {};
 
@@ -440,9 +471,48 @@ export function computeSummary(args: {
     coreCadence = coreSteps && coreDur > 0 ? (coreSteps.sum / coreDur) * 60 : null;
   }
 
-  // Tier 1 derived metrics — computed over the core-phase splits. When not
-  // narrowed, `coreSplits === fullSplits`, preserving prior behavior.
-  const fullSplits = (args.splits ?? []).filter(isFullSplit);
+  // ---- Mid-run pauses ----------------------------------------------------
+  // Detect pause/resume interruptions from the HK event stream. The split-
+  // derived pace metrics below are then computed on MOVING time (paused span
+  // subtracted from each affected split) so a bathroom stop doesn't masquerade
+  // as pace variability / a second-half fade / a stalled mile. HR and power are
+  // left on elapsed samples — HR really did drop during the stop.
+  const allSplits = args.splits ?? [];
+  const workoutStartMs =
+    allSplits.length > 0 && allSplits[0].start_time
+      ? Date.parse(allSplits[0].start_time)
+      : null;
+  const workoutEndMs =
+    allSplits.length > 0 && allSplits[allSplits.length - 1].end_time
+      ? Date.parse(allSplits[allSplits.length - 1].end_time!)
+      : null;
+  const recoveryWindows = (structure?.phases ?? [])
+    .filter((p) => p.phase === "strides" || p.phase === "intervals")
+    .map((p) => ({ startSeconds: p.start_seconds, endSeconds: p.end_seconds }));
+  const { intervals: pauseIntervals, pauseEvents } = detectPauses({
+    intervals: pauseIntervalsFromEvents(args.events, workoutEndMs),
+    splits: allSplits,
+    workoutStartMs,
+    recoveryWindows,
+  });
+  const pausedSeconds = totalPauseSeconds(pauseIntervals);
+
+  // Rewrite a split's pace + duration onto moving time. Identity when there are
+  // no pauses, so non-paused workouts are byte-for-byte unchanged.
+  const toMoving = (sp: SplitForSummary): SplitForSummary => {
+    if (pauseIntervals.length === 0) return sp;
+    const m = movingTimeForSplit(sp, pauseIntervals);
+    return {
+      ...sp,
+      duration_seconds: m.moving_duration_seconds,
+      pace_seconds_per_mile: m.moving_pace_seconds_per_mile,
+    };
+  };
+
+  // Tier 1 derived metrics — computed over the core-phase splits, on moving
+  // time. When not narrowed, `coreSplits === fullSplits`, preserving prior
+  // behavior for pause-free workouts.
+  const fullSplits = allSplits.filter(isFullSplit).map(toMoving);
   const coreSplits = narrowed
     ? fullSplits.filter((sp) => splitInCore(sp, t0 ?? 0, coreStart, coreEnd))
     : fullSplits;
@@ -503,6 +573,18 @@ export function computeSummary(args: {
     quality = "structured";
   }
 
+  // A pause is not degradation. Surface it for transparency but leave the
+  // quality verdict driven by the (now moving-time) effort signals — a single
+  // bathroom stop on an otherwise steady run stays "clean".
+  if (pauseEvents.length > 0 && !qualityReasons.includes("pause_events_present")) {
+    qualityReasons = [...qualityReasons, "pause_events_present"];
+  }
+
+  const movingDuration =
+    args.durationSeconds > 0 ? round(args.durationSeconds, 1) : null;
+  const elapsedDuration =
+    args.durationSeconds > 0 ? round(args.durationSeconds + pausedSeconds, 1) : null;
+
   return {
     avg_heart_rate_bpm: round(avgCoreHR, 0),
     max_heart_rate_bpm: coreHR ? Math.round(coreHR.max) : null,
@@ -546,6 +628,10 @@ export function computeSummary(args: {
           hr_to_power_ratio: round(hrToPowerFull, 3),
         }
       : null,
+
+    pause_events: pauseEvents,
+    total_moving_duration_seconds: movingDuration,
+    total_elapsed_duration_seconds: elapsedDuration,
   };
 }
 

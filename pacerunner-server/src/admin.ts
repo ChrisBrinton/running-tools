@@ -187,6 +187,11 @@ function main() {
             });
           }
           const splits = store.getSplits(w.id);
+          const events = store.getEvents(w.id).map((e) => ({
+            type: e.type,
+            start: e.start_time,
+            duration_seconds: e.duration_seconds,
+          }));
           const baseline = computeUserBaseline(store, u.id, w.id);
           const summary = computeSummary({
             samples,
@@ -196,6 +201,7 @@ function main() {
             splits,
             baseline,
             paceRunnerConfigName: w.pacerunner_config_name,
+            events,
           });
           store.db.prepare(
             "UPDATE workouts SET summary_json = ? WHERE id = ?"

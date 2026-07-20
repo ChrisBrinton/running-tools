@@ -82,6 +82,7 @@ export function mountWorkoutIngest(app: Hono, store: Store) {
       splits: computedSplits,
       baseline,
       paceRunnerConfigName: sanitizeConfigName(payload.pacerunner_config_name),
+      events: payload.events,
     });
 
     store.upsertWorkout({
