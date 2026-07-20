@@ -126,8 +126,13 @@ struct PaceRunnerApp: App {
                 syncManager.syncEntitlements(isPro: isPro)
             }
             .onReceive(NotificationCenter.default.publisher(for: .allDataRequested)) { _ in
-                // Watch requested all data — push everything
-                syncManager.syncAllConfigurations(configurationStore.configurations)
+                // Watch requested all data — push everything. But only push
+                // configs when we actually have some: syncAllConfigurations is a
+                // full REPLACE on the watch, so answering a watch Force-Sync with
+                // an empty set would wipe configs the user just created there.
+                if !configurationStore.configurations.isEmpty {
+                    syncManager.syncAllConfigurations(configurationStore.configurations)
+                }
                 syncManager.syncSettings(AppSettings.load())
                 syncManager.syncEntitlements(isPro: entitlementManager.isPro)
             }

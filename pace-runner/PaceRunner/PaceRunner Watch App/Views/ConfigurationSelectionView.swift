@@ -9,6 +9,7 @@ struct ConfigurationSelectionView: View {
     @EnvironmentObject var entitlementManager: EntitlementManager
     @State private var showingVolumeTest = false
     @State private var showingProAlert = false
+    @State private var showingQuickCreate = false
     @State private var settings = AppSettings.load()
     @State private var syncResult: String?
     @State private var syncResultColor: Color = .green
@@ -39,6 +40,25 @@ struct ConfigurationSelectionView: View {
         List {
             Section {
                 WatchSyncStatusView(model: syncStatusModel)
+            }
+
+            // Always-available way to build a run on the watch itself — so the
+            // list is never a dead-end (e.g. after a sync clears it, or before
+            // any config has been transferred from the phone).
+            Section {
+                Button {
+                    showingQuickCreate = true
+                } label: {
+                    Label("New Run", systemImage: "plus.circle.fill")
+                        .font(.headline)
+                }
+                .tint(.green)
+
+                if store.configurations.isEmpty {
+                    Text("No runs yet. Create one here or sync from your iPhone.")
+                        .font(.caption2)
+                        .foregroundStyle(.secondary)
+                }
             }
 
             ForEach(store.configurations, id: \.id) { config in
@@ -173,6 +193,14 @@ struct ConfigurationSelectionView: View {
             }
         }
         .navigationTitle("Workouts")
+        .sheet(isPresented: $showingQuickCreate) {
+            QuickCreateRunView(settings: settings) { config in
+                // Persist + sync the new run, then drop straight into its
+                // pre-workout screen (selecting swaps the root view).
+                store.createConfiguration(config)
+                store.select(config)
+            }
+        }
         .alert("Pro Feature", isPresented: $showingProAlert) {
             Button("OK", role: .cancel) { }
         } message: {

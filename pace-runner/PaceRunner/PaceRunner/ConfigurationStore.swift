@@ -68,6 +68,20 @@ class ConfigurationStore: ObservableObject {
             }
             .store(in: &cancellables)
 
+        // Adopt the merged union the SyncManager produces when the watch syncs
+        // its configs to us. Without this the phone's in-memory list diverged
+        // from what SyncManager persisted (the phone kept showing its own set
+        // while storage held the merge) — the bug that made watch-created
+        // configs seem not to arrive.
+        NotificationCenter.default.publisher(for: .configurationsReplacedAll)
+            .receive(on: DispatchQueue.main)
+            .sink { [weak self] notification in
+                if let configs = notification.object as? [RunConfiguration] {
+                    self?.handleReplacedAllConfigurations(configs)
+                }
+            }
+            .store(in: &cancellables)
+
         // Load configurations from storage
         loadConfigurations()
         syncAllConfigurationsIfNeeded()
@@ -95,7 +109,10 @@ class ConfigurationStore: ObservableObject {
     func deleteConfiguration(_ configuration: RunConfiguration) {
         configurations.removeAll { $0.id == configuration.id }
         saveConfigurations()
-        syncAllConfigurations()
+        // Propagate the delete as a tombstone, NOT as a full-set replace:
+        // under merge sync a shorter set no longer deletes anything on the peer,
+        // so an explicit deletion is the only thing that removes it there.
+        syncManager.deleteConfiguration(id: configuration.id)
     }
 
     /// Duplicates a configuration with a new name
@@ -140,8 +157,17 @@ class ConfigurationStore: ObservableObject {
 
     private func syncAllConfigurationsIfNeeded() {
         guard needsInitialSync else { return }
-        syncAllConfigurations()
         needsInitialSync = false
+        // Never let the automatic activation/initial sync push an EMPTY set:
+        // `syncAllConfigurations` is a full REPLACE on the watch, so an empty
+        // push from a fresh/not-yet-loaded phone silently wipes configs the
+        // user just created on the watch. Only explicit user actions
+        // (deleteConfiguration → syncAllConfigurations) may clear the watch.
+        guard !configurations.isEmpty else {
+            print("[ConfigurationStore] skipping initial sync — no local configs to push")
+            return
+        }
+        syncAllConfigurations()
     }
 
     /// Syncs all configurations to watch, replacing watch storage
@@ -184,6 +210,13 @@ class ConfigurationStore: ObservableObject {
 
     private func handleDeletedConfiguration(id: UUID) {
         configurations.removeAll { $0.id == id }
+        saveConfigurations()
+    }
+
+    /// Adopts the merged union produced by SyncManager. Persists locally (and
+    /// mirrors to the server) but does NOT re-sync — that would echo endlessly.
+    private func handleReplacedAllConfigurations(_ newConfigurations: [RunConfiguration]) {
+        configurations = newConfigurations
         saveConfigurations()
     }
 }

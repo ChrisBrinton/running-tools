@@ -328,6 +328,11 @@ public class SyncManager: NSObject, SyncManagerProtocol {
     }
 
     public func deleteConfiguration(id: UUID) {
+        // Record the tombstone locally FIRST (even if offline) so any later
+        // full-set sync carries the delete and it can't be resurrected by a
+        // merge from the peer.
+        recordTombstone(id: id)
+
         guard let session = session else {
             return
         }
@@ -365,7 +370,9 @@ public class SyncManager: NSObject, SyncManagerProtocol {
             let message: [String: Any] = [
                 "type": MessageType.configurationSyncAll.rawValue,
                 "data": configData,
-                "fingerprint": fp
+                "fingerprint": fp,
+                // Carry tombstones so the receiver's merge can apply our deletes.
+                "tombstones": encodedTombstones()
             ]
 
             // Use sendReliably for immediate + queued delivery
@@ -414,7 +421,8 @@ public class SyncManager: NSObject, SyncManagerProtocol {
                 let message: [String: Any] = [
                     "type": MessageType.configurationSyncAll.rawValue,
                     "data": configData,
-                    "fingerprint": fp
+                    "fingerprint": fp,
+                    "tombstones": encodedTombstones()
                 ]
                 session.transferUserInfo(message)
                 try session.updateApplicationContext(message)
@@ -430,7 +438,8 @@ public class SyncManager: NSObject, SyncManagerProtocol {
             let message: [String: Any] = [
                 "type": MessageType.configurationSyncAll.rawValue,
                 "data": configData,
-                "fingerprint": fp
+                "fingerprint": fp,
+                "tombstones": encodedTombstones()
             ]
 
             var completed = false
@@ -1037,6 +1046,13 @@ extension SyncManager: WCSessionDelegate {
         do {
             let configuration = try decoder.decode(RunConfiguration.self, from: configData)
 
+            // Delete wins: ignore an incremental update for a config we've
+            // tombstoned (the peer just hadn't learned of the delete yet).
+            if loadTombstones()[configuration.id] != nil {
+                print("\(loggerPrefix) handleConfigurationUpdate: ignoring update for tombstoned \(configuration.id)")
+                return
+            }
+
             // Save to UserDefaults
             saveConfiguration(configuration)
 
@@ -1062,7 +1078,9 @@ extension SyncManager: WCSessionDelegate {
             return
         }
 
-        // Delete from UserDefaults
+        // Record the tombstone so a later full-set merge (from either device)
+        // won't resurrect this config, then remove it locally.
+        recordTombstone(id: id)
         deleteConfigurationFromStorage(id: id)
 
         // Post notification for UI update
@@ -1081,35 +1099,55 @@ extension SyncManager: WCSessionDelegate {
         }
 
         do {
-            let configurations = try decoder.decode([RunConfiguration].self, from: configData)
-            print("\(loggerPrefix) handleConfigurationSyncAll: decoded \(configurations.count) configs")
+            let incoming = try decoder.decode([RunConfiguration].self, from: configData)
+            let incomingTombstones = decodeTombstones(message["tombstones"] as? [String: Double])
+            print("\(loggerPrefix) handleConfigurationSyncAll: decoded \(incoming.count) configs, \(incomingTombstones.count) tombstones")
 
-            // Replace all configurations in storage
-            if let data = try? encoder.encode(configurations) {
-                UserDefaults.standard.set(data, forKey: "configurations")
-                print("\(loggerPrefix) handleConfigurationSyncAll: saved to UserDefaults")
-            }
+            // MERGE by id rather than replacing. A full-set sync is no longer
+            // authoritative: it can only add/update configs and apply the
+            // sender's tombstones — it can never silently drop a config this
+            // device holds. That is what stops a peer which doesn't yet know
+            // about a locally-created config from wiping it.
+            let merged = ConfigurationMerge.merge(
+                local: loadConfigurations(),
+                localTombstones: loadTombstones(),
+                incoming: incoming,
+                incomingTombstones: incomingTombstones,
+                now: Date()
+            )
 
-            // Post notification for UI update with all configs
+            saveAllConfigurations(merged.configurations)
+            saveTombstones(merged.tombstones)
+            print("\(loggerPrefix) handleConfigurationSyncAll: merged -> \(merged.configurations.count) configs")
+
+            // Post the MERGED union (not the raw incoming set) so both stores
+            // adopt the same in-memory truth.
             NotificationCenter.default.post(
                 name: .configurationsReplacedAll,
-                object: configurations
+                object: merged.configurations
             )
-            print("\(loggerPrefix) handleConfigurationSyncAll: posted notification")
 
-            // The received configs are now our local set — adopt the sender's
-            // fingerprint (recomputed from the decoded configs, which is
-            // deterministic and matches the sender) so this side also latches
-            // as synced once it acks/receives.
-            let receivedFP = configsFingerprint(configurations)
+            // Our set IS the merged union now — latch its fingerprint as both
+            // local and acked so the sync-status domain reflects merged truth.
+            let mergedFP = configsFingerprint(merged.configurations)
             snapshotLock.lock()
-            localConfigsFP = receivedFP
-            lastAckedConfigsFP = receivedFP
+            localConfigsFP = mergedFP
+            lastAckedConfigsFP = mergedFP
             snapshotLock.unlock()
             recomputeSnapshot()
 
-            // Send ack back to sender, including the fingerprint of what we saved.
-            sendConfigSyncAck(configCount: configurations.count, fingerprint: receivedFP)
+            sendConfigSyncAck(configCount: merged.configurations.count, fingerprint: mergedFP)
+
+            // Converge the peer: if the merge produced a set different from what
+            // the sender sent — because we contributed configs it lacked, or
+            // applied a delete it didn't have — echo the union back. This
+            // terminates: once both sides hold the union, the next merge equals
+            // what was received, so no further echo is emitted.
+            let receivedFP = configsFingerprint(incoming)
+            if mergedFP != receivedFP {
+                print("\(loggerPrefix) handleConfigurationSyncAll: merged differs from sender — echoing union back")
+                syncAllConfigurations(merged.configurations)
+            }
 
         } catch {
             print("\(loggerPrefix) handleConfigurationSyncAll: Failed to decode configurations: \(error)")
@@ -1345,6 +1383,7 @@ extension SyncManager: WCSessionDelegate {
         // Clear all known UserDefaults keys
         let keysToRemove = [
             "configurations",
+            "configurationTombstones",
             "watchWorkoutSummaries",
             "watchWorkoutSyncedIDs",
             "workoutSummaries",
@@ -1458,6 +1497,68 @@ extension SyncManager: WCSessionDelegate {
             return []
         }
         return configurations
+    }
+
+    private func saveAllConfigurations(_ configurations: [RunConfiguration]) {
+        if let data = try? encoder.encode(configurations) {
+            UserDefaults.standard.set(data, forKey: "configurations")
+        }
+    }
+
+    // MARK: - Tombstones (deleted-config propagation for merge sync)
+
+    private static let tombstonesKey = "configurationTombstones"
+
+    /// Loads the id → deletedAt map used so deletes survive the merge sync.
+    private func loadTombstones() -> [UUID: Date] {
+        guard let raw = UserDefaults.standard.dictionary(forKey: Self.tombstonesKey) as? [String: Double] else {
+            return [:]
+        }
+        var result: [UUID: Date] = [:]
+        for (key, epoch) in raw {
+            if let id = UUID(uuidString: key) {
+                result[id] = Date(timeIntervalSince1970: epoch)
+            }
+        }
+        return result
+    }
+
+    private func saveTombstones(_ tombstones: [UUID: Date]) {
+        var raw: [String: Double] = [:]
+        for (id, date) in tombstones {
+            raw[id.uuidString] = date.timeIntervalSince1970
+        }
+        UserDefaults.standard.set(raw, forKey: Self.tombstonesKey)
+    }
+
+    /// Records a local deletion so subsequent full-set syncs carry it as a
+    /// tombstone (a merge can't otherwise tell "deleted" from "never had it").
+    private func recordTombstone(id: UUID) {
+        var tombstones = loadTombstones()
+        tombstones[id] = Date()
+        saveTombstones(tombstones)
+    }
+
+    /// Serializes tombstones for a WatchConnectivity message payload
+    /// (`[String: Double]` — a plist-safe type).
+    private func encodedTombstones() -> [String: Double] {
+        var raw: [String: Double] = [:]
+        for (id, date) in loadTombstones() {
+            raw[id.uuidString] = date.timeIntervalSince1970
+        }
+        return raw
+    }
+
+    /// Decodes tombstones received in a message payload.
+    private func decodeTombstones(_ raw: [String: Double]?) -> [UUID: Date] {
+        guard let raw = raw else { return [:] }
+        var result: [UUID: Date] = [:]
+        for (key, epoch) in raw {
+            if let id = UUID(uuidString: key) {
+                result[id] = Date(timeIntervalSince1970: epoch)
+            }
+        }
+        return result
     }
 
     private func saveWorkoutSummary(_ summary: WorkoutSummary) {

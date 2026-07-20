@@ -1,4 +1,5 @@
 import XCTest
+import CoreLocation
 @testable import PaceRunnerShared
 
 /// Tests for PaceCalculator with realistic noisy GPS data
@@ -260,5 +261,193 @@ final class PaceCalculatorTests: XCTestCase {
                           "Master pace must exclude paused time (got \(after.formatted))")
         XCTAssertEqual(after.totalSeconds, before.totalSeconds, accuracy: 60,
                        "Master pace should be ~unchanged across a pause (before \(before.formatted), after \(after.formatted))")
+    }
+
+    /// Several pauses in one run must all be excluded from the moving average.
+    /// Exercises the moving-time offset accumulating across more than one gap.
+    func testMultiplePausesAllExcludedFromMovingAverage() {
+        let start = Date()
+        var distance = 0.0
+        var elapsed = 0.0
+        var wallOffset = 0.0  // accumulated pause time added to wall-clock stamps
+
+        // ~8:00/mi: 10 m every 3 s.
+        calculator.addSample(distance: 0, timestamp: start)
+        func runFor(samples: Int) {
+            for _ in 0..<samples {
+                distance += 10
+                elapsed += 3
+                calculator.addSample(distance: distance,
+                                     timestamp: start.addingTimeInterval(elapsed + wallOffset))
+            }
+        }
+        func pause(_ seconds: Double) {
+            calculator.notePauseGap(seconds)
+            wallOffset += seconds
+        }
+
+        runFor(samples: 15)
+        guard let before = calculator.slowPace else { return XCTFail("no pace before pauses") }
+
+        pause(180)          // restroom break
+        runFor(samples: 15)
+        pause(45)           // quick water stop
+        runFor(samples: 15)
+
+        guard let after = calculator.slowPace else { return XCTFail("no pace after pauses") }
+
+        XCTAssertLessThan(after.totalSeconds, 600,
+                          "Master pace must exclude both pauses (got \(after.formatted))")
+        XCTAssertEqual(after.totalSeconds, before.totalSeconds, accuracy: 45,
+                       "Master pace should hold ~steady across multiple pauses (before \(before.formatted), after \(after.formatted))")
+    }
+
+    /// A distance calculator must not draw a chord across a pause. After
+    /// `breakContinuity()`, the next fix contributes zero distance (it only
+    /// re-establishes the reference point) and the accumulated total is kept.
+    /// This is what prevents a restroom-break relocation from injecting phantom
+    /// distance that would spike every moving-average window straddling the pause.
+    func testBreakContinuityDropsChordButKeepsTotal() {
+        let calc = ChordDistanceCalculator()
+
+        let a = CLLocation(latitude: 37.3300, longitude: -122.0300)
+        let b = CLLocation(latitude: 37.3300, longitude: -122.0299) // ~9 m east of a
+
+        XCTAssertEqual(calc.addLocation(a), 0, accuracy: 0.001, "first fix has no baseline")
+        let abDelta = calc.addLocation(b)
+        XCTAssertGreaterThan(abDelta, 1, "normal step should accumulate")
+        let totalBeforePause = calc.totalDistance
+
+        // Pause boundary: runner walks away and resumes ~150 m down the road.
+        calc.breakContinuity()
+        let c = CLLocation(latitude: 37.3313, longitude: -122.0299) // ~145 m north of b
+
+        let jumpDelta = calc.addLocation(c)
+        XCTAssertEqual(jumpDelta, 0, accuracy: 0.001,
+                       "the fix right after a break must add no distance (no chord across the pause)")
+        XCTAssertEqual(calc.totalDistance, totalBeforePause, accuracy: 0.001,
+                       "accumulated distance is preserved across breakContinuity")
+
+        // Normal accumulation resumes on the next fix.
+        let d = CLLocation(latitude: 37.3313, longitude: -122.0298) // ~9 m east of c
+        XCTAssertGreaterThan(calc.addLocation(d), 1, "accumulation resumes after the break")
+    }
+}
+
+/// Tests for the id-based configuration merge that replaced "replace-all"
+/// config sync. These are the guarantee that a config created on one device
+/// can't be wiped by a sync from the other.
+final class ConfigurationMergeTests: XCTestCase {
+
+    private func cfg(_ name: String) -> RunConfiguration {
+        RunConfiguration(
+            name: name,
+            distance: Distance(miles: 5),
+            targetPace: Pace(minutes: 8, seconds: 0),
+            cadenceOffset: 0,
+            paceTolerance: 5
+        )
+    }
+
+    private var now: Date { Date(timeIntervalSince1970: 1_700_000_000) }
+
+    /// The core fix: a config on either side survives; nothing is dropped.
+    func testMergeKeepsConfigsFromBothSides() {
+        let a = cfg("Watch Run")
+        let b = cfg("Phone Run")
+
+        let result = ConfigurationMerge.merge(
+            local: [a], localTombstones: [:],
+            incoming: [b], incomingTombstones: [:],
+            now: now
+        )
+
+        XCTAssertEqual(Set(result.configurations.map(\.id)), Set([a.id, b.id]))
+    }
+
+    /// The exact reported bug: an empty incoming set must not wipe local configs.
+    func testEmptyIncomingDoesNotWipeLocal() {
+        let a = cfg("A"); let b = cfg("B")
+
+        let result = ConfigurationMerge.merge(
+            local: [a, b], localTombstones: [:],
+            incoming: [], incomingTombstones: [:],
+            now: now
+        )
+
+        XCTAssertEqual(result.configurations.map(\.id), [a.id, b.id])
+    }
+
+    /// On an id collision the incoming (peer) copy wins.
+    func testIncomingWinsOnIdCollision() {
+        let a = cfg("Original")
+        var edited = a; edited.name = "Edited on peer"
+
+        let result = ConfigurationMerge.merge(
+            local: [a], localTombstones: [:],
+            incoming: [edited], incomingTombstones: [:],
+            now: now
+        )
+
+        XCTAssertEqual(result.configurations.count, 1)
+        XCTAssertEqual(result.configurations.first?.name, "Edited on peer")
+    }
+
+    /// A tombstone from the peer deletes the config locally and is retained.
+    func testIncomingTombstoneDeletesLocalConfig() {
+        let a = cfg("Keep"); let b = cfg("Delete me")
+
+        let result = ConfigurationMerge.merge(
+            local: [a, b], localTombstones: [:],
+            incoming: [], incomingTombstones: [b.id: now],
+            now: now
+        )
+
+        XCTAssertEqual(result.configurations.map(\.id), [a.id])
+        XCTAssertNotNil(result.tombstones[b.id])
+    }
+
+    /// Delete wins over a still-live copy the peer keeps sending.
+    func testLocalTombstoneSuppressesResurrection() {
+        let a = cfg("Zombie")
+
+        let result = ConfigurationMerge.merge(
+            local: [], localTombstones: [a.id: now],
+            incoming: [a], incomingTombstones: [:],   // peer still has it live
+            now: now
+        )
+
+        XCTAssertTrue(result.configurations.isEmpty, "a deleted config must not come back")
+        XCTAssertNotNil(result.tombstones[a.id])
+    }
+
+    /// Tombstones past the TTL are pruned, so the set can't grow forever and a
+    /// long-gone id could legitimately be re-created later.
+    func testExpiredTombstoneIsPruned() {
+        let a = cfg("Old delete")
+        let stale = now.addingTimeInterval(-ConfigurationMerge.tombstoneTTL - 1)
+
+        let result = ConfigurationMerge.merge(
+            local: [a], localTombstones: [a.id: stale],
+            incoming: [a], incomingTombstones: [:],
+            now: now
+        )
+
+        // Tombstone expired → no longer suppresses, and it's dropped from the map.
+        XCTAssertNil(result.tombstones[a.id])
+        XCTAssertEqual(result.configurations.map(\.id), [a.id])
+    }
+
+    /// Order: local order preserved, peer-only configs appended.
+    func testOrderLocalThenIncoming() {
+        let a = cfg("A"); let b = cfg("B"); let c = cfg("C")
+
+        let result = ConfigurationMerge.merge(
+            local: [a, b], localTombstones: [:],
+            incoming: [c], incomingTombstones: [:],
+            now: now
+        )
+
+        XCTAssertEqual(result.configurations.map(\.id), [a.id, b.id, c.id])
     }
 }
