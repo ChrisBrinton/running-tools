@@ -44,6 +44,17 @@ public protocol DistanceCalculator: AnyObject {
 
     /// Clear state and totals.
     func reset()
+
+    /// Break the continuity of the sample stream WITHOUT discarding the
+    /// accumulated total. The next `addLocation` starts a fresh segment and
+    /// contributes 0 distance (it only re-establishes the reference point).
+    ///
+    /// Called across a pause/resume boundary: while tracking is stopped the
+    /// runner may relocate (restroom, water stop) or the fix may drift. Without
+    /// this, the first post-resume fix would add a straight-line chord spanning
+    /// the entire break — phantom distance that also leaks into any moving-average
+    /// window straddling the pause.
+    func breakContinuity()
 }
 
 // MARK: - Chord (2D)
@@ -74,6 +85,10 @@ public final class ChordDistanceCalculator: DistanceCalculator {
     public func reset() {
         lastLocation = nil
         totalDistance = 0
+    }
+
+    public func breakContinuity() {
+        lastLocation = nil
     }
 }
 
@@ -112,6 +127,10 @@ public final class Chord3DDistanceCalculator: DistanceCalculator {
     public func reset() {
         lastLocation = nil
         totalDistance = 0
+    }
+
+    public func breakContinuity() {
+        lastLocation = nil
     }
 }
 
@@ -166,6 +185,10 @@ public final class SpeedFloorDistanceCalculator: DistanceCalculator {
         lastLocation = nil
         totalDistance = 0
     }
+
+    public func breakContinuity() {
+        lastLocation = nil
+    }
 }
 
 // MARK: - Speed Floor (3D)
@@ -214,6 +237,10 @@ public final class SpeedFloor3DDistanceCalculator: DistanceCalculator {
     public func reset() {
         lastLocation = nil
         totalDistance = 0
+    }
+
+    public func breakContinuity() {
+        lastLocation = nil
     }
 }
 

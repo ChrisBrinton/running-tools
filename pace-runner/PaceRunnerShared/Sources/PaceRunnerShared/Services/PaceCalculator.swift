@@ -35,9 +35,20 @@ public final class PaceCalculator: PaceCalculatorProtocol {
     // MARK: - State
 
     private let paceSubject = CurrentValueSubject<Pace?, Never>(nil)
+
+    /// All accepted observations, stamped in **moving time** (wall-clock minus
+    /// accumulated paused time). Every window is a pure function over this one
+    /// array — the time-based windows slice it by `timestamp`, the master window
+    /// slices it by `cumulativeDistance`. There is no separate per-window state.
     private var samples: [GPSSample] = []
     private var lastAcceptedDistance: Double?
+    /// Last accepted sample time, in moving-time coordinates.
     private var lastAcceptedTimestamp: Date?
+
+    /// Total paused time to subtract from incoming wall-clock timestamps so the
+    /// sample stream is continuous in moving time. Incremented by `notePauseGap`;
+    /// this is the single source of truth for pause accounting in the calculator.
+    private var pauseOffset: TimeInterval = 0
 
     // Debug: track previous pace values to detect large jumps
     private var previousFastPace: Pace?
@@ -100,16 +111,21 @@ public final class PaceCalculator: PaceCalculatorProtocol {
     public func addSample(distance: Double, timestamp: Date = Date()) {
         guard distance.isFinite, distance >= 0 else { return }
 
+        // Convert to moving time up front so everything downstream (baseline,
+        // stored sample, window slicing) operates in a single pause-excluded
+        // coordinate system.
+        let movingTimestamp = timestamp.addingTimeInterval(-pauseOffset)
+
         // First sample: just record baseline, don't compute pace yet
         guard let previousDistance = lastAcceptedDistance,
               let previousTimestamp = lastAcceptedTimestamp else {
             lastAcceptedDistance = distance
-            lastAcceptedTimestamp = timestamp
+            lastAcceptedTimestamp = movingTimestamp
             return
         }
 
         let deltaDistance = distance - previousDistance
-        let deltaTime = timestamp.timeIntervalSince(previousTimestamp)
+        let deltaTime = movingTimestamp.timeIntervalSince(previousTimestamp)
 
         // Only accept samples with meaningful deltas
         // IMPORTANT: Do NOT update lastAccepted* when rejecting — the next
@@ -120,12 +136,12 @@ public final class PaceCalculator: PaceCalculatorProtocol {
         }
 
         let speed = deltaDistance / deltaTime
-        let sample = GPSSample(timestamp: timestamp, speed: speed, cumulativeDistance: distance)
+        let sample = GPSSample(timestamp: movingTimestamp, speed: speed, cumulativeDistance: distance)
         guard sample.isValid else { return }
 
         // Now update the accepted baseline
         lastAcceptedDistance = distance
-        lastAcceptedTimestamp = timestamp
+        lastAcceptedTimestamp = movingTimestamp
 
         // Debug: log outlier samples (speed > 1 std dev from recent mean)
         logIfOutlier(sample)
@@ -146,21 +162,15 @@ public final class PaceCalculator: PaceCalculatorProtocol {
     public func notePauseGap(_ pauseDuration: TimeInterval) {
         guard pauseDuration > 0 else { return }
 
-        // Slide the accumulated history forward by the paused interval so it
-        // becomes contiguous, in "moving time", with the samples that arrive
-        // after resume. Without this the time-based windows (fast/medium) and
-        // especially the distance-based master window compute
-        // `timeTaken = last.timestamp - first.timestamp` across a span that
-        // includes the pause — inflating pace as if the runner had been
-        // crawling for the whole break. Shifting preserves the master window's
-        // history (it needs a full mile of samples) rather than discarding it.
-        samples = samples.map { sample in
-            GPSSample(
-                timestamp: sample.timestamp.addingTimeInterval(pauseDuration),
-                speed: sample.speed,
-                cumulativeDistance: sample.cumulativeDistance
-            )
-        }
+        // Advance the moving-time offset by the paused interval. Every sample
+        // that arrives after resume is stamped `wallClock - pauseOffset`, so it
+        // lands contiguously with the pre-pause history already stored in
+        // moving time — the break is squeezed out of the timeline. The existing
+        // history is preserved as-is (the master window needs up to a full mile
+        // of samples); nothing is rewritten. Contrast with the old approach,
+        // which re-stamped the entire array on every resume (O(n), and mutated
+        // already-committed samples).
+        pauseOffset += pauseDuration
 
         // Force the first post-resume sample to re-establish the baseline
         // rather than computing a speed across the pause (which would append a
@@ -173,6 +183,7 @@ public final class PaceCalculator: PaceCalculatorProtocol {
         samples.removeAll()
         lastAcceptedDistance = nil
         lastAcceptedTimestamp = nil
+        pauseOffset = 0
         previousFastPace = nil
         previousMediumPace = nil
         previousSlowPace = nil
@@ -182,11 +193,18 @@ public final class PaceCalculator: PaceCalculatorProtocol {
     // MARK: - Helpers
 
     private func purgeOldSamples() {
-        // Keep samples for longest window
-        // Need at least 1 mile of distance data (could take up to ~15 min at 15:00/mile pace)
-        // Use time-based cutoff of 20 minutes to be safe
+        // Keep samples for the longest window. The master (distance) window may
+        // need up to ~1 mile of history (~15 min at 15:00/mile), so retain a
+        // generous 20 minutes of MOVING time.
+        //
+        // Anchor the cutoff to the newest sample, not `Date()`: samples are
+        // stamped in moving time, so wall-clock `Date()` drifts ahead of them by
+        // the paused total and would purge too aggressively after a long break.
+        // Anchoring to the newest sample also means a stall in updates can't
+        // silently evict the whole history.
+        guard let newest = samples.last?.timestamp else { return }
         let maxWindow: TimeInterval = 20 * 60 // 20 minutes
-        let cutoff = Date().addingTimeInterval(-maxWindow)
+        let cutoff = newest.addingTimeInterval(-maxWindow)
         samples.removeAll { $0.timestamp < cutoff }
     }
 

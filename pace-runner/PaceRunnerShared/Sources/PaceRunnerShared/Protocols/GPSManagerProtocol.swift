@@ -35,4 +35,9 @@ public protocol GPSManagerProtocol: AnyObject {
 
     /// Reset distance counter
     func resetDistance()
+
+    /// Break sample continuity across a pause without losing accumulated
+    /// distance. The next fix after resume starts a fresh segment so no
+    /// straight-line chord is drawn across the paused interval.
+    func breakContinuity()
 }

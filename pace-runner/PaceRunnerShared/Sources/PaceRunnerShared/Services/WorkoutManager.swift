@@ -469,6 +469,11 @@ public final class WorkoutManager: NSObject, WorkoutManagerProtocol {
         #if os(watchOS)
         workoutSession?.resume()
         #endif
+        // Drop the GPS reference point BEFORE re-enabling updates so the first
+        // post-resume fix can't draw a straight-line chord across the break
+        // (phantom distance that would also corrupt any moving-average window
+        // straddling the pause). Accumulated distance is preserved.
+        gpsManager.breakContinuity()
         gpsManager.startTracking()
         let settings = settingsProvider()
         let effectiveBPM: Int

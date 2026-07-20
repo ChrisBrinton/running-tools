@@ -121,6 +121,16 @@ public final class GPSManager: NSObject, GPSManagerProtocol {
             calc.reset()
         }
     }
+
+    public func breakContinuity() {
+        // Keep accumulated totals; only drop the reference point so the next
+        // fix doesn't chord across a pause. Applies to every calculator so the
+        // active method and the shadow methods stay consistent.
+        lastLocation = nil
+        for calc in allCalculators {
+            calc.breakContinuity()
+        }
+    }
 }
 
 extension GPSManager: CLLocationManagerDelegate {
