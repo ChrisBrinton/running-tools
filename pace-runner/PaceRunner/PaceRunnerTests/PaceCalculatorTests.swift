@@ -332,6 +332,93 @@ final class PaceCalculatorTests: XCTestCase {
         let d = CLLocation(latitude: 37.3313, longitude: -122.0298) // ~9 m east of c
         XCTAssertGreaterThan(calc.addLocation(d), 1, "accumulation resumes after the break")
     }
+
+    /// Reproduces the 7/26 long-run bug: a ~13-min pause during which the
+    /// distance source (HealthKit) keeps counting ~150 m of walking. That
+    /// pause-distance must not be attributed to post-resume moving time, or the
+    /// distance-based master window reports a phantom fast pace that lingers for
+    /// ~1 mile. Feed >1 mile before and after so the master (1-mile) window
+    /// spans the resume boundary.
+    func testPauseDistanceGainDoesNotSpikeMasterPace() {
+        let start = Date()
+        var distance = 0.0
+        var elapsed = 0.0
+
+        // ~10:40/mi = 2.5 m/s: 10 m every 4 s.
+        calculator.addSample(distance: 0, timestamp: start)
+        for _ in 1...200 {                 // 2000 m over 800 s (>1 mile)
+            distance += 10; elapsed += 4
+            calculator.addSample(distance: distance, timestamp: start.addingTimeInterval(elapsed))
+        }
+        guard let before = calculator.slowPace else { return XCTFail("no pace before pause") }
+
+        // 13-minute pause; HealthKit counts 150 m of restroom walking during it.
+        let pause = 780.0
+        calculator.notePauseGap(pause)
+        distance += 150   // distance that accrued while paused
+
+        for _ in 1...200 {                 // resume, same 2.5 m/s
+            distance += 10; elapsed += 4
+            calculator.addSample(distance: distance, timestamp: start.addingTimeInterval(elapsed + pause))
+        }
+        guard let after = calculator.slowPace else { return XCTFail("no pace after resume") }
+
+        XCTAssertGreaterThan(after.totalSeconds, 520,
+            "master pace must not spike fast from pause-time distance (got \(after.formatted))")
+        XCTAssertEqual(after.totalSeconds, before.totalSeconds, accuracy: 45,
+            "master pace should hold ~10:40 across the pause (before \(before.formatted), after \(after.formatted))")
+    }
+
+    /// The 7/26 failure mode in full: HealthKit keeps DELIVERING distance
+    /// samples during the pause (walking to the restroom), stamped in
+    /// wall-clock time and accepted before `notePauseGap` advances the
+    /// moving-time offset. After resume every fresh sample then lands
+    /// ~pauseDuration BEHIND those pause-era samples in moving time. Without
+    /// self-healing the calculator rejects everything until wall clock catches
+    /// up — on the road that froze every window for ~5 minutes — and the
+    /// walking distance stays in the master window as a phantom-fast spike.
+    func testWindowsRecoverWhenSamplesWereAcceptedDuringPause() {
+        let start = Date()
+        var distance = 0.0
+        var elapsed = 0.0   // wall-clock seconds since start
+
+        // ~10:40/mi = 2.5 m/s: 10 m every 4 s for >1 mile.
+        calculator.addSample(distance: 0, timestamp: start)
+        for _ in 1...200 {
+            distance += 10; elapsed += 4
+            calculator.addSample(distance: distance, timestamp: start.addingTimeInterval(elapsed))
+        }
+        guard let before = calculator.slowPace else { return XCTFail("no pace before pause") }
+
+        // 13-minute pause. For the first 5 minutes the pedometer keeps
+        // delivering walking samples (~1.4 m/s) that the calculator accepts —
+        // the pause offset hasn't advanced yet. Then 8 minutes standing still.
+        for _ in 1...60 {
+            distance += 7; elapsed += 5
+            calculator.addSample(distance: distance, timestamp: start.addingTimeInterval(elapsed))
+        }
+        elapsed += 480
+        calculator.notePauseGap(780)
+
+        // Resume at the same 2.5 m/s. With the freeze bug, every sample in the
+        // first ~5 minutes here was rejected and the windows never moved.
+        for i in 1...200 {
+            distance += 10; elapsed += 4
+            calculator.addSample(distance: distance, timestamp: start.addingTimeInterval(elapsed))
+
+            if i == 30 {   // 2 minutes back in — a full fast window of fresh data
+                guard let fast = calculator.fastPace else { return XCTFail("fast window still frozen 2 min after resume") }
+                XCTAssertEqual(fast.totalSeconds, 644, accuracy: 60,
+                    "fast pace must reflect live running ~2 min after resume, not walking-era history (got \(fast.formatted))")
+            }
+        }
+
+        guard let after = calculator.slowPace else { return XCTFail("no master pace after resume") }
+        XCTAssertGreaterThan(after.totalSeconds, 520,
+            "walking distance accepted during the pause must not read as a fast spike (got \(after.formatted))")
+        XCTAssertEqual(after.totalSeconds, before.totalSeconds, accuracy: 45,
+            "master pace should hold ~10:40 across the pause (before \(before.formatted), after \(after.formatted))")
+    }
 }
 
 /// Tests for the id-based configuration merge that replaced "replace-all"

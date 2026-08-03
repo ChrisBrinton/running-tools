@@ -41,14 +41,34 @@ public final class PaceCalculator: PaceCalculatorProtocol {
     /// array — the time-based windows slice it by `timestamp`, the master window
     /// slices it by `cumulativeDistance`. There is no separate per-window state.
     private var samples: [GPSSample] = []
+    /// Last accepted cumulative distance, in ADJUSTED terms (raw minus
+    /// `distanceOffset`).
     private var lastAcceptedDistance: Double?
+    /// Last accepted RAW cumulative distance as fed in — the anchor used to
+    /// absorb the distance that accrues across a pause.
+    private var lastAcceptedRawDistance: Double?
     /// Last accepted sample time, in moving-time coordinates.
     private var lastAcceptedTimestamp: Date?
 
-    /// Total paused time to subtract from incoming wall-clock timestamps so the
-    /// sample stream is continuous in moving time. Incremented by `notePauseGap`;
-    /// this is the single source of truth for pause accounting in the calculator.
+    /// Total excluded time to subtract from incoming wall-clock timestamps so
+    /// the sample stream is continuous in moving time. Incremented by
+    /// `notePauseGap` (pauses) and by the invalid-speed guard in `addSample`
+    /// (glitch spans are excised from both axes); this is the single source of
+    /// truth for excluded-time accounting in the calculator.
     private var pauseOffset: TimeInterval = 0
+
+    /// Total distance that accrued while paused, subtracted from incoming
+    /// cumulative distance. Symmetric to `pauseOffset`: the time axis excludes
+    /// paused time, so the distance axis must too, or the distance-based master
+    /// window computes Δdistance-with-pause over Δtime-without-pause and reports
+    /// a phantom fast pace until the pre-pause samples age out (~1 mile). The
+    /// GPS path avoids the jump via `breakContinuity`, but the HealthKit path
+    /// keeps counting distance through a pause, so this is the general guard.
+    private var distanceOffset: Double = 0
+
+    /// Set by `notePauseGap`; the next accepted sample re-anchors the distance
+    /// axis (absorbs the pause's distance) exactly once.
+    private var awaitingResumeRebase: Bool = false
 
     // Debug: track previous pace values to detect large jumps
     private var previousFastPace: Pace?
@@ -111,21 +131,54 @@ public final class PaceCalculator: PaceCalculatorProtocol {
     public func addSample(distance: Double, timestamp: Date = Date()) {
         guard distance.isFinite, distance >= 0 else { return }
 
-        // Convert to moving time up front so everything downstream (baseline,
-        // stored sample, window slicing) operates in a single pause-excluded
-        // coordinate system.
+        // First sample after a resume: absorb whatever distance accrued during
+        // the pause so the internal distance axis stays continuous with the
+        // pre-pause anchor. Done exactly once, before any delta is computed.
+        if awaitingResumeRebase {
+            if let anchorRaw = lastAcceptedRawDistance {
+                distanceOffset += distance - anchorRaw
+            }
+            awaitingResumeRebase = false
+        }
+
+        // Convert to moving time + adjusted distance up front so everything
+        // downstream (baseline, stored sample, window slicing) operates in a
+        // single pause-excluded coordinate system on both axes.
         let movingTimestamp = timestamp.addingTimeInterval(-pauseOffset)
+        let adjustedDistance = distance - distanceOffset
 
         // First sample: just record baseline, don't compute pace yet
         guard let previousDistance = lastAcceptedDistance,
               let previousTimestamp = lastAcceptedTimestamp else {
-            lastAcceptedDistance = distance
+            lastAcceptedDistance = adjustedDistance
+            lastAcceptedRawDistance = distance
             lastAcceptedTimestamp = movingTimestamp
             return
         }
 
-        let deltaDistance = distance - previousDistance
+        let deltaDistance = adjustedDistance - previousDistance
         let deltaTime = movingTimestamp.timeIntervalSince(previousTimestamp)
+
+        // A sample stamped BEHIND the accepted baseline means the moving-time
+        // mapping shifted underneath us — the classic case is samples that were
+        // accepted DURING a pause (stamped before `notePauseGap` advanced the
+        // offset), which leaves every post-resume sample ~pauseDuration in the
+        // past. Rejecting them would freeze every window until wall clock
+        // caught up (minutes). Instead, treat this sample as the authoritative
+        // "now": excise the pause-era samples stamped ahead of it, erase their
+        // distance from the adjusted axis (it was covered in zero moving time),
+        // and re-anchor the baseline so the stream recovers on the next sample.
+        if deltaTime < 0 {
+            samples.removeAll { $0.timestamp > movingTimestamp }
+            let retainedCumulative = samples.last?.cumulativeDistance ?? 0
+            if adjustedDistance > retainedCumulative {
+                distanceOffset += adjustedDistance - retainedCumulative
+            }
+            lastAcceptedDistance = distance - distanceOffset
+            lastAcceptedRawDistance = distance
+            lastAcceptedTimestamp = movingTimestamp
+            return
+        }
 
         // Only accept samples with meaningful deltas
         // IMPORTANT: Do NOT update lastAccepted* when rejecting — the next
@@ -136,11 +189,25 @@ public final class PaceCalculator: PaceCalculatorProtocol {
         }
 
         let speed = deltaDistance / deltaTime
-        let sample = GPSSample(timestamp: movingTimestamp, speed: speed, cumulativeDistance: distance)
-        guard sample.isValid else { return }
+        let sample = GPSSample(timestamp: movingTimestamp, speed: speed, cumulativeDistance: adjustedDistance)
+        guard sample.isValid else {
+            // A physically impossible speed is a distance glitch (GPS jump or
+            // a catch-up burst of HK samples). Excise the glitch span from
+            // BOTH axes — its distance and its time — exactly like a pause:
+            // simply returning would smear that distance into the next
+            // accepted sample as a phantom-fast mega-delta (historically a
+            // full minute of fast-window swing), while excising only the
+            // distance would leave dead time that biases the windows slow.
+            // The baselines stay put; the next sample lands contiguously.
+            distanceOffset += deltaDistance
+            pauseOffset += deltaTime
+            lastAcceptedRawDistance = distance
+            return
+        }
 
         // Now update the accepted baseline
-        lastAcceptedDistance = distance
+        lastAcceptedDistance = adjustedDistance
+        lastAcceptedRawDistance = distance
         lastAcceptedTimestamp = movingTimestamp
 
         // Debug: log outlier samples (speed > 1 std dev from recent mean)
@@ -172,18 +239,21 @@ public final class PaceCalculator: PaceCalculatorProtocol {
         // already-committed samples).
         pauseOffset += pauseDuration
 
-        // Force the first post-resume sample to re-establish the baseline
-        // rather than computing a speed across the pause (which would append a
-        // spurious near-zero-speed sample).
-        lastAcceptedDistance = nil
-        lastAcceptedTimestamp = nil
+        // Re-anchor the distance axis on the next sample. We deliberately KEEP
+        // lastAccepted* as the pre-pause anchor: the first post-resume sample
+        // absorbs the pause's distance into `distanceOffset` (see addSample),
+        // keeping both axes continuous so no phantom pace is produced.
+        awaitingResumeRebase = true
     }
 
     public func reset() {
         samples.removeAll()
         lastAcceptedDistance = nil
+        lastAcceptedRawDistance = nil
         lastAcceptedTimestamp = nil
         pauseOffset = 0
+        distanceOffset = 0
+        awaitingResumeRebase = false
         previousFastPace = nil
         previousMediumPace = nil
         previousSlowPace = nil

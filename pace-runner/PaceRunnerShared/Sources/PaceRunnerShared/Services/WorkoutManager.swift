@@ -92,7 +92,18 @@ public final class WorkoutManager: NSObject, WorkoutManagerProtocol {
     private var totalPausedDuration: TimeInterval = 0
 
     /// When the current pause started (nil if not paused)
+    /// Written under `healthKitDistanceLock` so the HealthKit sample callback
+    /// (background queue) can read a consistent value.
     private var pauseStartTime: Date?
+
+    /// Closed pause intervals for this workout. The HealthKit anchored query
+    /// keeps delivering pedometer distance through a pause (and a post-resume
+    /// delivery can still carry pause-era samples), so every incoming sample is
+    /// checked against these intervals and dropped if it overlaps one — the
+    /// Workout app excludes pause-time distance, and so must we, or totals,
+    /// splits, and the pace windows all drift fast. Guarded by
+    /// `healthKitDistanceLock`.
+    private var completedPauseIntervals: [DateInterval] = []
 
     /// Query for finding active workouts in companion mode
     private var activeWorkoutQuery: HKSampleQuery?
@@ -422,8 +433,10 @@ public final class WorkoutManager: NSObject, WorkoutManagerProtocol {
             throw WorkoutManagerError.noActiveWorkout
         }
 
-        // Record when pause started
+        // Record when pause started (locked: read from the HK sample callback)
+        healthKitDistanceLock.lock()
         pauseStartTime = Date()
+        healthKitDistanceLock.unlock()
         print("WorkoutManager: Paused at \(pauseStartTime!)")
 
         // Log pause event
@@ -449,9 +462,18 @@ public final class WorkoutManager: NSObject, WorkoutManagerProtocol {
 
         // Calculate how long we were paused and add to total
         if let pauseStart = pauseStartTime {
-            let pauseDuration = Date().timeIntervalSince(pauseStart)
+            let resumeTime = Date()
+            let pauseDuration = resumeTime.timeIntervalSince(pauseStart)
             totalPausedDuration += pauseDuration
             print("WorkoutManager: Resumed after \(String(format: "%.1f", pauseDuration))s pause, total paused: \(String(format: "%.1f", totalPausedDuration))s")
+
+            // Close out the pause interval BEFORE clearing pauseStartTime so a
+            // concurrent HK delivery never sees "not paused" for a span that
+            // was actually paused.
+            healthKitDistanceLock.lock()
+            completedPauseIntervals.append(DateInterval(start: pauseStart, end: resumeTime))
+            pauseStartTime = nil
+            healthKitDistanceLock.unlock()
 
             // Keep the rolling pace windows from counting the pause as running
             // time — slide their history forward so the master (distance-based)
@@ -464,7 +486,6 @@ public final class WorkoutManager: NSObject, WorkoutManagerProtocol {
                 "totalPausedDuration": String(format: "%.1f", totalPausedDuration)
             ])
         }
-        pauseStartTime = nil
 
         #if os(watchOS)
         workoutSession?.resume()
@@ -685,17 +706,44 @@ public final class WorkoutManager: NSObject, WorkoutManagerProtocol {
             syncStartTimeWithHealthKit(samples: quantitySamples)
         }
 
-        // Sum up the distance from new samples and find the latest sample timestamp
+        // Snapshot pause bookkeeping; an in-progress pause counts as an
+        // open-ended interval. (This callback runs on a background queue.)
+        healthKitDistanceLock.lock()
+        var pauseIntervals = completedPauseIntervals
+        if let openPauseStart = pauseStartTime {
+            pauseIntervals.append(DateInterval(start: openPauseStart, end: .distantFuture))
+        }
+        healthKitDistanceLock.unlock()
+
+        // Sum up the distance from new samples and find the latest sample
+        // timestamp. Samples that overlap a pause are dropped entirely: the
+        // pedometer keeps writing distanceWalkingRunning while the session is
+        // paused, and counting that walking corrupts totals, splits, and the
+        // pace windows (the Workout app excludes it too).
         var newDistance: Double = 0
+        var droppedPausedDistance: Double = 0
         var latestSampleEndDate: Date?
         for sample in quantitySamples {
             let meters = sample.quantity.doubleValue(for: .meter())
+            let span = DateInterval(start: sample.startDate, end: sample.endDate)
+            if pauseIntervals.contains(where: { $0.intersects(span) }) {
+                droppedPausedDistance += meters
+                continue
+            }
             newDistance += meters
             if let current = latestSampleEndDate {
                 if sample.endDate > current { latestSampleEndDate = sample.endDate }
             } else {
                 latestSampleEndDate = sample.endDate
             }
+        }
+
+        if droppedPausedDistance > 0 {
+            debugLog.logDistance("Dropped paused-time HK distance", data: [
+                "droppedMeters": String(format: "%.1f", droppedPausedDistance),
+                "keptMeters": String(format: "%.1f", newDistance),
+                "samples": String(quantitySamples.count)
+            ])
         }
 
         // Track delivery stats
@@ -1636,7 +1684,10 @@ public final class WorkoutManager: NSObject, WorkoutManagerProtocol {
 
         // Reset pause tracking
         totalPausedDuration = 0
+        healthKitDistanceLock.lock()
         pauseStartTime = nil
+        completedPauseIntervals = []
+        healthKitDistanceLock.unlock()
 
         // Stop workout recheck timer
         stopWorkoutRecheckTimer()
