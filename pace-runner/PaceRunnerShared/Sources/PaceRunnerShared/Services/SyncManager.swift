@@ -57,6 +57,10 @@ public class SyncManager: NSObject, SyncManagerProtocol {
     private var lastErrorText: String?
     private var statusMirror: AnyCancellable?
 
+    /// Last time the watch auto-pulled all data from the phone; used to debounce
+    /// reachability flapping so we don't spam `requestAllData`.
+    private var lastAutoPull: Date?
+
     // Message types
     private enum MessageType: String {
         case configurationUpdate = "configurationUpdate"
@@ -519,6 +523,20 @@ public class SyncManager: NSObject, SyncManagerProtocol {
         }
     }
 
+    /// Watch-only: pull everything from the phone on connect, debounced so
+    /// reachability flapping can't spam the phone. Phone→watch pushes are
+    /// best-effort (queued transfers can arrive late; the single
+    /// applicationContext slot gets overwritten by settings/entitlement syncs),
+    /// so an explicit request on connect is what makes phone-created configs
+    /// land deterministically. Merge sync guarantees this can't wipe
+    /// watch-created configs.
+    private func autoPullAllDataIfNeeded() {
+        let now = Date()
+        if let last = lastAutoPull, now.timeIntervalSince(last) < 5 { return }
+        lastAutoPull = now
+        requestAllData()
+    }
+
     /// Sends a reset-all command to the counterpart device, clearing all data
     public func sendResetAll() {
         guard let session = session else {
@@ -882,12 +900,14 @@ extension SyncManager: WCSessionDelegate {
         recomputeSnapshot()
 
         #if os(watchOS)
-        // On activation, tell the phone our current pending-history count.
+        // On activation, tell the phone our current pending-history count and
+        // pull its configs/settings so phone-created configs show up here.
         snapshotLock.lock()
         let pending = localHistoryPending
         snapshotLock.unlock()
         if session.isReachable {
             sendHistoryStatus(pending)
+            autoPullAllDataIfNeeded()
         }
         #endif
     }
@@ -919,11 +939,13 @@ extension SyncManager: WCSessionDelegate {
             NotificationCenter.default.post(name: .watchConnectivityReachable, object: nil)
 
             #if os(watchOS)
-            // Re-report pending history now that we can reach the phone.
+            // Re-report pending history and pull the phone's configs/settings
+            // now that we can reach it.
             snapshotLock.lock()
             let pending = localHistoryPending
             snapshotLock.unlock()
             sendHistoryStatus(pending)
+            autoPullAllDataIfNeeded()
             #endif
         } else {
             print("\(loggerPrefix) sessionReachabilityDidChange: not reachable")

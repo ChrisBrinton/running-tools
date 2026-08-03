@@ -5,12 +5,14 @@ struct WorkoutContainerView: View {
     @StateObject private var viewModel: WorkoutViewModel
     private let onExit: () -> Void
     private let onNewRun: ((RunConfiguration) -> Void)?
+    private let syncStatusModel: WatchSyncStatusModel?
 
     init(
         configuration: RunConfiguration,
         workoutManager: WorkoutManagerProtocol,
         syncManager: SyncManagerProtocol?,
         workoutStore: WatchWorkoutStore? = nil,
+        syncStatusModel: WatchSyncStatusModel? = nil,
         onExit: @escaping () -> Void,
         onNewRun: ((RunConfiguration) -> Void)? = nil
     ) {
@@ -21,6 +23,7 @@ struct WorkoutContainerView: View {
         ))
         self.onExit = onExit
         self.onNewRun = onNewRun
+        self.syncStatusModel = syncStatusModel
     }
 
     var body: some View {
@@ -36,12 +39,7 @@ struct WorkoutContainerView: View {
     private var workoutContent: some View {
         switch viewModel.state.status {
         case .waitingForGPS:
-            PreWorkoutView(
-                configuration: viewModel.state.configuration,
-                startAction: { viewModel.start() },
-                changeAction: exitWorkout,
-                newRunAction: onNewRun
-            )
+            preWorkout
 
         case .running, .paused:
             ActiveWorkoutView(viewModel: viewModel)
@@ -52,22 +50,22 @@ struct WorkoutContainerView: View {
                     exitWorkout()
                 }
             } else {
-                PreWorkoutView(
-                    configuration: viewModel.state.configuration,
-                    startAction: { viewModel.start() },
-                    changeAction: exitWorkout,
-                    newRunAction: onNewRun
-                )
+                preWorkout
             }
 
         @unknown default:
-            PreWorkoutView(
-                configuration: viewModel.state.configuration,
-                startAction: { viewModel.start() },
-                changeAction: exitWorkout,
-                newRunAction: onNewRun
-            )
+            preWorkout
         }
+    }
+
+    private var preWorkout: some View {
+        PreWorkoutView(
+            configuration: viewModel.state.configuration,
+            startAction: { viewModel.start() },
+            changeAction: exitWorkout,
+            newRunAction: onNewRun,
+            syncStatusModel: syncStatusModel
+        )
     }
 
     @ViewBuilder

@@ -6,6 +6,7 @@ struct PreWorkoutView: View {
     let startAction: () -> Void
     let changeAction: (() -> Void)?
     let newRunAction: ((RunConfiguration) -> Void)?
+    var syncStatusModel: WatchSyncStatusModel? = nil
 
     @State private var showingQuickCreate = false
     @State private var settings = AppSettings.load()
@@ -15,6 +16,10 @@ struct PreWorkoutView: View {
 
     var body: some View {
         VStack(spacing: 8) {
+            if let syncStatusModel {
+                WatchSyncStatusView(model: syncStatusModel)
+            }
+
             Text(configuration.name)
                 .font(.headline)
 

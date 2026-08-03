@@ -50,6 +50,7 @@ struct PaceRunner_Watch_AppApp: App {
                         workoutManager: workoutManager,
                         syncManager: syncManager,
                         workoutStore: workoutStore,
+                        syncStatusModel: syncStatusModel,
                         onExit: { configurationStore.clearSelection() },
                         onNewRun: { newConfig in
                             // Check for existing config with same name, otherwise create
