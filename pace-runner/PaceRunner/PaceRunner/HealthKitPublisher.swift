@@ -51,6 +51,17 @@ final class HealthKitPublisher: ObservableObject {
     private let tokenKey = "publisher_ingest_token"
     private let pushedIDsKey = "publisher_pushed_workout_ids"
     private let pushedLogIDsKey = "publisher_pushed_log_ids"
+    private let incompleteIDsKey = "publisher_incomplete_workout_ids"
+
+    /// How long after a workout ends we keep re-exporting it when its first
+    /// push was sample-incomplete. HealthKit syncs a workout's running-dynamics
+    /// samples (power/speed/distance) from the watch in batches that can trail
+    /// the workout object by minutes-to-hours; a generous window lets a later
+    /// foreground/background pass replace the partial payload once they land.
+    /// Bounded so a workout that genuinely never gets those samples (an older
+    /// device, a third-party recording) stops retrying instead of looping
+    /// forever. Re-push is safe: the server upserts and full-replaces samples.
+    private let incompleteRetryWindow: TimeInterval = 7 * 24 * 3600
 
     var serverURL: String {
         get { UserDefaults.standard.string(forKey: urlKey) ?? "" }
@@ -100,6 +111,23 @@ final class HealthKitPublisher: ObservableObject {
         set {
             let arr = Array(newValue).suffix(1000)
             UserDefaults.standard.set(Array(arr), forKey: pushedLogIDsKey)
+        }
+    }
+
+    /// HK workout UUIDs whose most recent push carried an INCOMPLETE sample set
+    /// (see `payloadIsComplete`). Kept apart from `pushedWorkoutIDs`: a workout
+    /// here has been pushed (so the server has whatever we had), but stays
+    /// eligible for re-export until it either comes back complete or ages out of
+    /// `incompleteRetryWindow`. This is what stops a payload built mid-sync from
+    /// being frozen in permanently.
+    private var incompletePushedIDs: Set<String> {
+        get {
+            let arr = UserDefaults.standard.stringArray(forKey: incompleteIDsKey) ?? []
+            return Set(arr)
+        }
+        set {
+            let arr = Array(newValue).suffix(1000)
+            UserDefaults.standard.set(Array(arr), forKey: incompleteIDsKey)
         }
     }
 
@@ -190,7 +218,17 @@ final class HealthKitPublisher: ObservableObject {
         }
 
         let pushed = pushedWorkoutIDs
-        let pending = workouts.filter { !pushed.contains($0.uuid.uuidString) }
+        let incomplete = incompletePushedIDs
+        let pending = workouts.filter { w in
+            let id = w.uuid.uuidString
+            if !pushed.contains(id) { return true }
+            // A previously partial push is retried until its samples finish
+            // syncing or it ages out of the retry window.
+            if incomplete.contains(id), now.timeIntervalSince(w.endDate) <= incompleteRetryWindow {
+                return true
+            }
+            return false
+        }
 
         // Even when nothing is pending, run the log backfill: an already-pushed
         // workout may still be missing its PaceRunner log (log not yet available
@@ -210,10 +248,13 @@ final class HealthKitPublisher: ObservableObject {
             }
             let result = await pushOneWorkout(workout)
             switch result {
-            case .success:
+            case .success(let complete):
                 ok += 1
-                await MainActor.run { self.markPushed(workout.uuid.uuidString) }
-                if notifyEach {
+                await MainActor.run { self.markPushed(workout.uuid.uuidString, complete: complete) }
+                // Only ping the user when the workout is fully synced — a
+                // partial push will be superseded by a later complete one, and
+                // we don't want two "synced" banners for the same run.
+                if notifyEach, complete {
                     await postWorkoutSyncNotification(for: workout)
                 }
             case .failure(let err):
@@ -313,6 +354,7 @@ final class HealthKitPublisher: ObservableObject {
 
     func resetPushedHistory() {
         pushedWorkoutIDs = []
+        incompletePushedIDs = []
         totalPushedCount = 0
         lastSuccessfulPush = nil
         lastError = nil
@@ -409,6 +451,7 @@ final class HealthKitPublisher: ObservableObject {
     func wipeLocalCredentials() {
         ingestToken = ""
         pushedWorkoutIDs = []
+        incompletePushedIDs = []
         totalPushedCount = 0
         lastSuccessfulPush = nil
         lastError = nil
@@ -571,13 +614,37 @@ final class HealthKitPublisher: ObservableObject {
     /// name when one matches, post it, mark as pushed on success. The PaceRunner
     /// verbose log is attached separately by `backfillPaceRunnerLogs` so that a
     /// log which isn't yet available at push time still lands on a later pass.
-    private func pushOneWorkout(_ workout: HKWorkout) async -> Result<Void, PushError> {
+    /// On success the `Bool` reports whether the payload was sample-complete
+    /// (see `payloadIsComplete`); the caller uses it to decide whether to keep
+    /// re-exporting this workout on later passes.
+    private func pushOneWorkout(_ workout: HKWorkout) async -> Result<Bool, PushError> {
         let exporter = HealthKitExporter.shared
         var payload = await exporter.buildWorkoutPayload(for: workout)
         if let summary = await matchingSummary(for: workout) {
             payload["pacerunner_config_name"] = summary.configurationName
         }
-        return await post(path: "/ingest/workout", body: payload, label: "workout \(workout.uuid.uuidString)")
+        let complete = payloadIsComplete(payload, workout: workout)
+        let result = await post(path: "/ingest/workout", body: payload, label: "workout \(workout.uuid.uuidString)")
+        return result.map { complete }
+    }
+
+    /// Whether a built payload carries everything we expect for this workout.
+    /// The failure mode we guard against is HealthKit handing us a workout whose
+    /// running-dynamics samples (power/distance) haven't finished syncing from
+    /// the watch yet. Only outdoor running with real distance is required to
+    /// have them; walks, indoor runs, and zero-distance activities are treated
+    /// as complete so they don't retry forever.
+    private func payloadIsComplete(_ payload: [String: Any], workout: HKWorkout) -> Bool {
+        guard workout.workoutActivityType == .running else { return true }
+        if (workout.metadata?[HKMetadataKeyIndoorWorkout] as? NSNumber)?.boolValue == true {
+            return true
+        }
+        let meters = workout.totalDistance?.doubleValue(for: .meter()) ?? 0
+        guard meters > 100 else { return true }
+        guard let samples = payload["samples"] as? [String: [[String: Any]]] else { return false }
+        let hasDistance = !(samples["distanceWalkingRunning"]?.isEmpty ?? true)
+        let hasPower = !(samples["runningPower"]?.isEmpty ?? true)
+        return hasDistance && hasPower
     }
 
     /// Self-healing PaceRunner-log attachment. Runs over *every* fetched HK
@@ -688,11 +755,18 @@ final class HealthKitPublisher: ObservableObject {
     // MARK: - State helpers
 
     @MainActor
-    private func markPushed(_ id: String) {
+    private func markPushed(_ id: String, complete: Bool) {
         var set = pushedWorkoutIDs
-        set.insert(id)
+        let isNew = set.insert(id).inserted
         pushedWorkoutIDs = set
-        totalPushedCount += 1
+
+        // Track (or clear) partial pushes so `pending` knows whether to retry.
+        var inc = incompletePushedIDs
+        if complete { inc.remove(id) } else { inc.insert(id) }
+        incompletePushedIDs = inc
+
+        // Count each workout once, not on every corrective re-export.
+        if isNew { totalPushedCount += 1 }
     }
 
     @MainActor

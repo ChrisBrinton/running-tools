@@ -53,6 +53,25 @@ export function mountWorkoutIngest(app: Hono, store: Store) {
     const rawMetaJSON = payload.raw_metadata ? JSON.stringify(payload.raw_metadata) : null;
     const isIndoor = detectIndoor(payload.raw_metadata);
 
+    // Downgrade guard. The phone can push a workout before HealthKit has
+    // finished syncing its running-dynamics samples from the watch, producing a
+    // partial (or empty) payload. If we already hold MORE samples than this push
+    // carries, treat it as a stale partial: refresh cheap metadata but keep the
+    // richer samples, splits, and summary rather than clobbering good data with
+    // a thinner re-push. (The phone's own completeness gate normally prevents
+    // this; this is the server-side backstop.)
+    const incomingSampleCount = payload.samples
+      ? Object.values(payload.samples).reduce((acc, arr) => acc + arr.length, 0)
+      : 0;
+    const existing = store.getWorkout(auth.user.id, payload.id);
+    const existingSampleCount = existing ? store.countQuantitySamples(payload.id) : 0;
+    const isDowngrade = existing !== undefined && incomingSampleCount < existingSampleCount;
+    if (isDowngrade) {
+      console.warn(
+        `[ingest] ${payload.id}: partial re-push (${incomingSampleCount} < ${existingSampleCount} samples) — preserving stored data`
+      );
+    }
+
     // Compute splits up-front so the summary can fold in derived
     // first-half / second-half / drift / variability + the elev_loss
     // fallback that sums per-split losses when HK metadata is missing.
@@ -106,10 +125,12 @@ export function mountWorkoutIngest(app: Hono, store: Store) {
       pacerunner_workout_id: null,
       pacerunner_config_name: sanitizeConfigName(payload.pacerunner_config_name),
       ingested_by_device: payload.device ?? null,
-      summary_json: JSON.stringify(summary),
+      // On a downgrade, pass null so the upsert's COALESCE keeps the richer
+      // stored summary instead of overwriting it with this thinner one.
+      summary_json: isDowngrade ? null : JSON.stringify(summary),
     });
 
-    if (payload.samples) {
+    if (payload.samples && !isDowngrade) {
       const rows = [];
       for (const [type, samples] of Object.entries(payload.samples)) {
         for (const s of samples) {
@@ -140,8 +161,9 @@ export function mountWorkoutIngest(app: Hono, store: Store) {
 
     // Persist the splits we computed earlier (before the summary pass).
     // Splits are a derived view — never block ingest on a parse failure.
+    // Skipped on a downgrade so a thin re-push can't wipe good splits.
     let splitCount = 0;
-    if (computedSplits.length > 0) {
+    if (computedSplits.length > 0 && !isDowngrade) {
       store.replaceSplits(
         payload.id,
         computedSplits.map((s) => ({
@@ -189,6 +211,7 @@ export function mountWorkoutIngest(app: Hono, store: Store) {
       split_count: splitCount,
       is_indoor: isIndoor,
       weather_queued: !isIndoor && routeRelPath !== null,
+      skipped_downgrade: isDowngrade,
     });
   });
 }

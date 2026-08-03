@@ -98,6 +98,91 @@ test("a pause inside a strides recovery window is not counted", () => {
   assert.equal(intervals.length, 0);
 });
 
+test("a distance-bearing run with no power/distance samples is flagged samples_incomplete", () => {
+  // The Jul 22/24 signature: real distance, but the sample export raced the
+  // watch sync and arrived empty. The summary must flag it for the coach.
+  const summary = computeSummary({
+    samples: {},
+    rawMetadata: undefined,
+    totalDistanceMeters: 10000,
+    durationSeconds: 3600,
+  });
+  assert.ok(
+    summary.run_quality_reasons.includes("samples_incomplete"),
+    `expected samples_incomplete, got ${JSON.stringify(summary.run_quality_reasons)}`
+  );
+});
+
+test("a complete run is NOT flagged samples_incomplete", () => {
+  const summary = computeSummary({
+    samples: {
+      runningPower: [{ start: "2026-07-28T10:47:00Z", end: "2026-07-28T10:47:01Z", value: 240, unit: "W" }],
+      distanceWalkingRunning: [{ start: "2026-07-28T10:47:00Z", end: "2026-07-28T10:47:01Z", value: 3, unit: "m" }],
+    },
+    rawMetadata: undefined,
+    totalDistanceMeters: 10000,
+    durationSeconds: 3600,
+  });
+  assert.ok(!summary.run_quality_reasons.includes("samples_incomplete"));
+});
+
+test("a pause at the very start is reported as pre_workout_offset, not a pause_event", () => {
+  const start = Date.parse("2026-07-22T11:12:18Z");
+  const iv = pauseIntervalsFromEvents(
+    [
+      { type: "pause", start: "2026-07-22T11:12:18Z", duration_seconds: 0 },
+      { type: "resume", start: "2026-07-22T11:16:11Z", duration_seconds: 0 }, // 233s
+    ],
+    null
+  );
+  const { pauseEvents, intervals, preWorkoutOffsetSeconds } = detectPauses({
+    intervals: iv,
+    splits: [{ start_time: "2026-07-22T11:12:18Z", end_time: "2026-07-22T11:22:18Z" }],
+    workoutStartMs: start,
+  });
+  assert.equal(pauseEvents.length, 0, "pre-run delay must not appear as a mid-run pause");
+  assert.equal(preWorkoutOffsetSeconds, 233);
+  assert.equal(intervals.length, 1, "still kept for moving-time subtraction");
+});
+
+test("a mid-run pause is NOT reclassified as a pre_workout_offset", () => {
+  const start = Date.parse("2026-07-19T11:00:00Z");
+  const iv = pauseIntervalsFromEvents(
+    [
+      { type: "pause", start: "2026-07-19T11:30:00Z", duration_seconds: 0 }, // 1800s in
+      { type: "resume", start: "2026-07-19T11:33:00Z", duration_seconds: 0 },
+    ],
+    null
+  );
+  const { pauseEvents, preWorkoutOffsetSeconds } = detectPauses({
+    intervals: iv,
+    splits: [{ start_time: "2026-07-19T11:00:00Z", end_time: "2026-07-19T12:00:00Z" }],
+    workoutStartMs: start,
+  });
+  assert.equal(pauseEvents.length, 1);
+  assert.equal(preWorkoutOffsetSeconds, 0);
+  assert.equal(pauseEvents[0].start_seconds, 1800);
+});
+
+test("with no workout-start reference a t=0-looking pause stays a pause_event", () => {
+  // No splits → workoutStartMs null → startSeconds falls back to 0 for every
+  // pause; reclassifying then would misfire, so we must NOT.
+  const iv = pauseIntervalsFromEvents(
+    [
+      { type: "pause", start: "2026-07-22T11:40:00Z", duration_seconds: 0 },
+      { type: "resume", start: "2026-07-22T11:41:00Z", duration_seconds: 0 },
+    ],
+    null
+  );
+  const { pauseEvents, preWorkoutOffsetSeconds } = detectPauses({
+    intervals: iv,
+    splits: [],
+    workoutStartMs: null,
+  });
+  assert.equal(pauseEvents.length, 1);
+  assert.equal(preWorkoutOffsetSeconds, 0);
+});
+
 /**
  * Integration: reproduce the real Jul 19 2026 long run (id 04CAB6AB…). Mile 4
  * elapsed = 970s because it contains a ~336s restroom stop. Before the fix,

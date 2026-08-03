@@ -157,6 +157,13 @@ export interface WorkoutSummary {
   /** Wall-clock time out (moving + all pauses) — "how long was I out." Equals
    *  moving time when there were no pauses. Null when duration is unknown. */
   total_elapsed_duration_seconds: number | null;
+
+  /** Seconds of paused time at the very start of the workout — you tapped Start
+   *  then stood around before running. Structurally distinct from a mid-run
+   *  interruption (no split to attribute it to, no effort interrupted), so it's
+   *  kept out of `pause_events` and reported here instead. 0 when there was no
+   *  pre-run delay. Still counted in `total_elapsed_duration_seconds`. */
+  pre_workout_offset_seconds: number;
 }
 
 export interface FullWorkoutSummary {
@@ -489,7 +496,7 @@ export function computeSummary(args: {
   const recoveryWindows = (structure?.phases ?? [])
     .filter((p) => p.phase === "strides" || p.phase === "intervals")
     .map((p) => ({ startSeconds: p.start_seconds, endSeconds: p.end_seconds }));
-  const { intervals: pauseIntervals, pauseEvents } = detectPauses({
+  const { intervals: pauseIntervals, pauseEvents, preWorkoutOffsetSeconds } = detectPauses({
     intervals: pauseIntervalsFromEvents(args.events, workoutEndMs),
     splits: allSplits,
     workoutStartMs,
@@ -580,6 +587,19 @@ export function computeSummary(args: {
     qualityReasons = [...qualityReasons, "pause_events_present"];
   }
 
+  // Data-quality flag: a run covered real distance but arrived with neither its
+  // power nor its distance sample channels — the signature of a workout the
+  // phone exported before HealthKit finished syncing samples from the watch.
+  // Surfacing it lets the coach ignore the run's (missing/degraded) metrics
+  // instead of reading them as real. Clears automatically once a complete
+  // re-push replaces the summary.
+  const distanceMeters = args.totalDistanceMeters ?? 0;
+  const hasPowerSamples = (s.runningPower?.length ?? 0) > 0;
+  const hasDistanceSamples = (s.distanceWalkingRunning?.length ?? 0) > 0;
+  if (distanceMeters > 100 && !hasPowerSamples && !hasDistanceSamples) {
+    qualityReasons = [...qualityReasons, "samples_incomplete"];
+  }
+
   const movingDuration =
     args.durationSeconds > 0 ? round(args.durationSeconds, 1) : null;
   const elapsedDuration =
@@ -632,6 +652,7 @@ export function computeSummary(args: {
     pause_events: pauseEvents,
     total_moving_duration_seconds: movingDuration,
     total_elapsed_duration_seconds: elapsedDuration,
+    pre_workout_offset_seconds: preWorkoutOffsetSeconds,
   };
 }
 

@@ -784,6 +784,16 @@ export class Store {
     ).all(workoutID) as QuantitySampleRow[];
   }
 
+  /** Number of stored quantity samples for a workout. Used by the ingest
+   *  downgrade guard to detect a re-push that carries fewer samples than we
+   *  already have (a partial payload built mid-sync) and must not overwrite. */
+  countQuantitySamples(workoutID: string): number {
+    const row = this.db.prepare(
+      "SELECT COUNT(*) AS n FROM quantity_samples WHERE workout_id = ?"
+    ).get(workoutID) as { n: number };
+    return row.n;
+  }
+
   replaceEvents(workoutID: string, events: WorkoutEventRow[]): void {
     const txn = this.db.transaction((rs: WorkoutEventRow[]) => {
       this.db.prepare("DELETE FROM workout_events WHERE workout_id = ?").run(workoutID);

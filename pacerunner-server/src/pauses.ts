@@ -123,19 +123,30 @@ export function overlapSeconds(
  * interruptions). Returns the kept events AND the kept intervals so callers use
  * the SAME filtered set for both the event list and moving-time subtraction.
  */
+/** A pause that begins at (or within this many seconds of) the workout start is
+ *  a pre-run delay — you tapped Start, then stood around before actually
+ *  running — not a mid-effort interruption. It's reported separately as
+ *  `pre_workout_offset_seconds` rather than polluting `pause_events`. */
+const PRE_WORKOUT_START_THRESHOLD_SECONDS = 10;
+
 export function detectPauses(args: {
   intervals: PauseInterval[];
   splits: SplitTimeWindow[];
   workoutStartMs: number | null;
   recoveryWindows?: RecoveryWindow[];
   source?: "healthkit_event" | "inferred_from_samples";
-}): { intervals: PauseInterval[]; pauseEvents: PauseEvent[] } {
+}): {
+  intervals: PauseInterval[];
+  pauseEvents: PauseEvent[];
+  preWorkoutOffsetSeconds: number;
+} {
   const { intervals, splits, workoutStartMs } = args;
   const source = args.source ?? "healthkit_event";
   const recovery = args.recoveryWindows ?? [];
 
   const keptIntervals: PauseInterval[] = [];
   const pauseEvents: PauseEvent[] = [];
+  let preWorkoutOffsetSeconds = 0;
 
   for (const iv of intervals) {
     const startSeconds =
@@ -146,7 +157,22 @@ export function detectPauses(args: {
     );
     if (inRecovery) continue;
 
+    // A pause at the very start is a pre-run offset, not an interruption. Only
+    // reclassify when we have a real workout-start reference — with no splits,
+    // `startSeconds` falls back to 0 for every pause and would misfire.
+    const isPreWorkout =
+      workoutStartMs !== null && startSeconds <= PRE_WORKOUT_START_THRESHOLD_SECONDS;
+
+    // Kept either way: the span is still non-moving time to subtract from the
+    // splits it overlaps (a pre-start offset overlaps none, so it's harmless
+    // there while keeping total_elapsed honest).
     keptIntervals.push(iv);
+
+    if (isPreWorkout) {
+      preWorkoutOffsetSeconds += (iv.endMs - iv.startMs) / 1000;
+      continue;
+    }
+
     pauseEvents.push({
       start_seconds: round1(Math.max(0, startSeconds)),
       duration_seconds: round1((iv.endMs - iv.startMs) / 1000),
@@ -155,7 +181,11 @@ export function detectPauses(args: {
     });
   }
 
-  return { intervals: keptIntervals, pauseEvents };
+  return {
+    intervals: keptIntervals,
+    pauseEvents,
+    preWorkoutOffsetSeconds: round1(preWorkoutOffsetSeconds),
+  };
 }
 
 function splitIndexAt(ms: number, splits: SplitTimeWindow[]): number | null {
