@@ -39,7 +39,16 @@ Server:
 
 ## Commits & PRs
 
-- Working branch `001-pace-runner-mvp`. Commit/push only when asked; ask before
-  pushing. Keep commits atomic with a clear summary of scope and how it was
-  verified (which targets built, tests run, what still needs on-device checks).
-- End commit messages with: `Co-Authored-By: Claude Opus 4.8 (1M context) <noreply@anthropic.com>`.
+- Working branch `001-pace-runner-mvp`. Commit as you go and push after each
+  commit, without asking first: when a logical grouping of work is done and
+  verified, land it. Judgment call rather than a hard rule — don't commit
+  half-finished or failing work, and split a long stretch into several atomic
+  commits rather than one omnibus. Each commit message should carry a clear
+  summary of scope and how it was verified (which targets built, tests run,
+  what still needs on-device checks).
+- End commit messages with a `Co-Authored-By:` trailer naming **the model
+  actually writing the commit**, not a fixed string — substitute your own model
+  name and context-window label. Format:
+  `Co-Authored-By: Claude <model> (<context>) <noreply@anthropic.com>`
+  (e.g. `Co-Authored-By: Claude Opus 5 (1M context) <noreply@anthropic.com>`).
+  Older commits name older models; match your own, not the history.

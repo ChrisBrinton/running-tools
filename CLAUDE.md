@@ -95,8 +95,19 @@ To query the live server from a session, POST JSON-RPC to
 ## Git / commits
 
 - Working branch: `001-pace-runner-mvp` (also the effective main here).
-- Commit/push only when asked. End commit messages with:
-  `Co-Authored-By: Claude Opus 4.8 (1M context) <noreply@anthropic.com>`
+- Commit as you go, and push after each commit — no need to ask first. When a
+  logical grouping of work is done and verified, commit it and push. This is a
+  working habit, not a hard rule: use judgment on what makes a grouping (a
+  feature, a fix, a docs pass), keep commits atomic, and don't commit work that
+  is half-finished or failing its tests. Committing several groupings from one
+  stretch of work as separate commits is the norm, not the exception.
+- End commit messages with a `Co-Authored-By:`
+  trailer naming **the model actually writing the commit** — substitute your own
+  model name rather than copying an example, and include the context-window
+  label when the session has one. Format:
+  `Co-Authored-By: Claude <model> (<context>) <noreply@anthropic.com>`
+  (e.g. `Co-Authored-By: Claude Opus 5 (1M context) <noreply@anthropic.com>`).
+  Existing commits name older models; match your own, not the history.
 
 ## Where the detail lives
 
