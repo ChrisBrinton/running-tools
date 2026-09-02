@@ -308,6 +308,20 @@ export function detectWorkoutStructure(args: {
     }
     coreEnd = leadStart;
     const durs = strideCluster.map((b) => b.end - b.start);
+    // Stride pace = the fast portion only. The phase's `avg_pace_seconds_per_mile`
+    // spans the walking recovery between reps, so it reads far slower than any
+    // stride was actually run (~13:00/mi on a real 4-stride block) and is
+    // misleading if read as "stride pace".
+    let burstMeters = 0;
+    let burstSeconds = 0;
+    for (const b of strideCluster) {
+      burstMeters += sumIn(dist, b.start, b.end);
+      burstSeconds += b.end - b.start;
+    }
+    const stridePace =
+      burstMeters > 0 && burstSeconds > 0
+        ? round(burstSeconds / (burstMeters / METERS_PER_MILE), 1)
+        : null;
     // True peak = the single hardest power sample inside any burst window
     // (not the max of per-burst medians).
     let peakPower = -Infinity;
@@ -326,7 +340,7 @@ export function detectWorkoutStructure(args: {
       avg_running_power_watts: roundOrNull(meanIn(power, leadStart, last.end), 0),
       reps: strideCluster.length,
       avg_stride_duration_seconds: Math.round(mean(durs)),
-      avg_stride_pace_seconds_per_mile: null,
+      avg_stride_pace_seconds_per_mile: stridePace,
       peak_stride_power_watts: Number.isFinite(peakPower) ? Math.round(peakPower) : null,
     };
   }
@@ -413,6 +427,11 @@ const TEMPO = {
   WALK_PACE: 780, // s/mi; a split slower than this is walking, not easy running
   EASY_SLOWEST_FRACTION: 0.4, // baseline = median of the slowest this-fraction
   PACE_DELTA: 30, // s/mi faster than easy to count a split as tempo
+  /** A leading split at least this much slower than the rest of its block is a
+   *  warmup that got swallowed, not part of the effort. */
+  WARMUP_PACE_RATIO: 1.08,
+  WARMUP_MIN_SEC: 3 * 60,
+  WARMUP_MAX_SEC: 15 * 60,
 } as const;
 
 interface TempoResult {
@@ -493,11 +512,32 @@ function detectTempo(
   // bracketed by easy running.
   if (blocks.length === 1 && blocks[0][1] - blocks[0][0] >= mask.length) return null;
 
-  const first = elapsed[blocks[0][0]];
+  // A leading warmup swallowed into the block. The easy baseline is the median
+  // of the slowest ~40% of splits, so on a "1mi easy + 4mi tempo" session the
+  // single easy mile is half that sample and drags the baseline down until the
+  // warmup itself clears the threshold. Re-check the block's own first split
+  // against the effort it supposedly belongs to.
+  const firstBlock = blocks[0];
+  if (firstBlock[0] === 0 && firstBlock[1] - firstBlock[0] >= 3) {
+    const blockPaces = paces.slice(firstBlock[0], firstBlock[1]);
+    const restMedian = median(blockPaces.slice(1));
+    const lead = elapsed[0];
+    const leadDuration = lead.endSec - lead.startSec;
+    const isSlowerThanEffort = lead.pace >= TEMPO.WARMUP_PACE_RATIO * restMedian;
+    const isWarmupLength =
+      leadDuration >= TEMPO.WARMUP_MIN_SEC && leadDuration <= TEMPO.WARMUP_MAX_SEC;
+    if (isSlowerThanEffort && isWarmupLength) {
+      firstBlock[0] = 1;
+    }
+  }
+
+  const first = elapsed[firstBlock[0]];
   const last = elapsed[blocks[blocks.length - 1][1] - 1];
+  // Clamp to 0: a split's start_time can precede the power-sample t0 by a
+  // second or two, which previously surfaced as `start_seconds: -1`.
   return {
-    start_seconds: Math.round(first.startSec),
-    end_seconds: Math.round(last.endSec),
+    start_seconds: Math.max(0, Math.round(first.startSec)),
+    end_seconds: Math.max(0, Math.round(last.endSec)),
     kind: blocks.length >= 2 ? "intervals" : "tempo",
     reps: blocks.length >= 2 ? blocks.length : undefined,
   };

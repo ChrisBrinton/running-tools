@@ -72,7 +72,19 @@ trend questions don't paginate raw samples. Every field is nullable. Key pieces:
   `hr_to_power_ratio`.
 - **`workout_type`** — intent from the PaceRunner config name when present,
   else an HR/pace/distance heuristic — plus `planned_workout_type` (always from
-  the config name, for planned-vs-actual).
+  the config name, for planned-vs-actual). Two cases override intent:
+  - **Abandoned sessions.** A run under 60% of its planned distance whose
+    execution also degraded is reported as `aborted` rather than as its intended
+    type, so it drops out of that type's trend queries; the intent stays on
+    `planned_workout_type`, and `run_quality_reasons` carries an `abandoned_…`
+    code with the actual percentage. Both conditions are required — a short but
+    clean run is a cutback, a full-distance degraded run is a bad day.
+  - **Indoor runs.** No GPS pace and usually no power, so classification is HR
+    and duration only, at capped confidence. The reference is the runner's own
+    `median_run_hr_bpm_30d`, not a fraction of observed max — an observed max is
+    only ever the hardest effort actually recorded, which for a runner who never
+    goes all-out sits barely above their easy HR and drags every zone down with
+    it.
 - **`run_quality`** — how the *execution* held together, independent of intent:
   `clean` / `degraded` / `aborted`, or **`structured`** when the run has detected
   structure (strides/tempo/intervals) so whole-workout flags aren't meaningful.

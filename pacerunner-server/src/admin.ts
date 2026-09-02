@@ -202,6 +202,7 @@ function main() {
             baseline,
             paceRunnerConfigName: w.pacerunner_config_name,
             events,
+            isIndoor: w.is_indoor === 1,
           });
           store.db.prepare(
             "UPDATE workouts SET summary_json = ? WHERE id = ?"

@@ -28,9 +28,15 @@ export const TOOL_DESCRIPTORS: ToolDescriptor[] = [
           type: "string",
           description:
             "Optional auto-classification filter. One of: easy, moderate, long, " +
-            "tempo, recovery, race, walk_jog. Filtering relies on heuristic " +
-            "labels — check workout_type_confidence on each summary; values " +
-            "below ~0.5 should not be trusted blindly.",
+            "tempo, recovery, race, walk_jog, aborted. Filtering relies on " +
+            "heuristic labels — check workout_type_confidence on each summary; " +
+            "values below ~0.5 should not be trusted blindly. `aborted` means " +
+            "the session was cut far short of its planned distance AND its " +
+            "execution broke down; those runs are deliberately excluded from " +
+            "their intended type's results, so a query for `tempo` will not " +
+            "return an abandoned tempo — read `planned_workout_type` to find " +
+            "what it was meant to be. Indoor runs carry no pace or power, so " +
+            "they are classified on HR and duration alone at capped confidence.",
         },
         limit: { type: "integer", description: "Max rows. Default 50." },
       },

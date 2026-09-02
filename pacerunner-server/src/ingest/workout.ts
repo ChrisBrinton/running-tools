@@ -102,6 +102,7 @@ export function mountWorkoutIngest(app: Hono, store: Store) {
       baseline,
       paceRunnerConfigName: sanitizeConfigName(payload.pacerunner_config_name),
       events: payload.events,
+      isIndoor,
     });
 
     store.upsertWorkout({

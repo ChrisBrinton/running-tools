@@ -182,7 +182,12 @@ export type WorkoutType =
   | "tempo"
   | "recovery"
   | "race"
-  | "walk_jog";
+  | "walk_jog"
+  /** The session was abandoned: far short of its planned distance AND its
+   *  execution broke down. Reported instead of the intended type so the run
+   *  drops out of trend queries for that type; the intent is still readable on
+   *  `planned_workout_type`. */
+  | "aborted";
 
 export interface HalfSummary {
   avg_heart_rate_bpm: number | null;
@@ -340,6 +345,15 @@ export interface UserBaseline {
   /** Median pace seconds/mi over the last 30 days, restricted to runs
    *  with HR < ~65% of observed_max — a rough proxy for "easy" runs. */
   median_easy_pace_seconds_per_mile_30d: number | null;
+  /** Median average-HR across the user's runs in the last 30 days — their
+   *  typical running heart rate.
+   *
+   *  `observed_max_hr_bpm` is a lifetime *observed* max, not a true max: a
+   *  runner who never records an all-out effort has an observed max barely
+   *  above their easy HR, which makes every fraction-of-max band far too low.
+   *  Comparing against the user's own habitual running HR avoids that. Null
+   *  until there are runs with HR in the window. */
+  median_run_hr_bpm_30d: number | null;
 }
 
 /** Minimal shape of a split row that the summary cares about. Mirrors the
@@ -385,6 +399,10 @@ export function computeSummary(args: {
    *  present, mid-run pauses are detected and the split-derived pace metrics
    *  are computed on moving time. */
   events?: WorkoutEventInput[];
+  /** Treadmill / indoor workout. Pace is estimated rather than measured and
+   *  power is usually absent, so the classifier falls back to HR and duration
+   *  instead of trusting pace-derived signals. */
+  isIndoor?: boolean;
 }): WorkoutSummary {
   const s = args.samples ?? {};
 
@@ -550,6 +568,7 @@ export function computeSummary(args: {
       avgPace: corePace,
       hrSamples: s.heartRate,
       baseline: args.baseline ?? null,
+      isIndoor: args.isIndoor ?? false,
     });
     workoutType = fromHeuristic.workoutType;
     confidence = fromHeuristic.confidence;
@@ -578,6 +597,37 @@ export function computeSummary(args: {
       ...qualityReasons,
     ];
     quality = "structured";
+  }
+
+  // An abandoned session reports what it actually was. A run cut far short of
+  // its planned distance whose execution also broke down is not a tempo (or a
+  // long, or a race) — leaving the intended label on it silently poisons that
+  // type's pace/HR trends. Intent stays readable on `planned_workout_type`.
+  // Both conditions are required: a short-but-clean run is a deliberate cutback,
+  // and a full-distance-but-degraded run is a bad day, not an abandoned one.
+  const plannedMiles = parsePlannedMiles(args.paceRunnerConfigName ?? null);
+  const actualMiles = args.totalDistanceMeters
+    ? args.totalDistanceMeters / SECONDS_PER_MILE
+    : null;
+  const execution = coreQuality?.quality ?? null;
+  if (
+    plannedMiles !== null &&
+    plannedMiles > 0 &&
+    actualMiles !== null &&
+    (execution === "degraded" || execution === "aborted")
+  ) {
+    const completion = actualMiles / plannedMiles;
+    if (completion < ABORT_COMPLETION_FRACTION) {
+      qualityReasons = [
+        ...qualityReasons,
+        `abandoned_${Math.round(completion * 100)}pct_of_${round(plannedMiles, 1)}mi_planned`,
+      ];
+      workoutType = "aborted";
+      // Both inputs are strong and objective (measured distance vs. a stated
+      // plan, plus fired breakdown signals), so this is a confident call — but
+      // never more confident than the intent label it replaces.
+      confidence = 0.9;
+    }
   }
 
   // A pause is not degradation. Surface it for transparency but leave the
@@ -946,6 +996,111 @@ function classifyFromConfigName(
   return null;
 }
 
+/** Below this share of the planned distance, a run whose execution also broke
+ *  down is treated as abandoned rather than as its intended type. */
+const ABORT_COMPLETION_FRACTION = 0.6;
+
+/**
+ * Total planned miles from a PaceRunner config name.
+ *
+ * Sums every "<n>mi" the name mentions, so compound plans work:
+ * "5mi Easy" → 5, "1mi Easy + 4mi Tempo" → 5. Returns null when the name
+ * states no distance (e.g. "Half Marathon"), which disables the abandoned
+ * check rather than guessing at a plan.
+ */
+export function parsePlannedMiles(name: string | null): number | null {
+  if (!name) return null;
+  let total = 0;
+  let matched = false;
+  for (const m of name.matchAll(/(\d+(?:\.\d+)?)\s*mi\b/gi)) {
+    const miles = Number(m[1]);
+    if (Number.isFinite(miles) && miles > 0) {
+      total += miles;
+      matched = true;
+    }
+  }
+  return matched ? total : null;
+}
+
+/**
+ * Classify an indoor workout from HR and duration alone.
+ *
+ * Treadmill runs carry no GPS pace and usually no power, so the outdoor
+ * heuristic's pace-derived branches are running on estimates. That misfires:
+ * a 121 bpm treadmill run was labeled tempo at 0.90 because a low observed max
+ * HR pulled the zone-3 floor down to ~119. Here the decision is a pure HR-zone
+ * one against the user's own max, and confidence is capped to reflect that
+ * whole signal channels are missing.
+ */
+function classifyIndoor(args: {
+  durationSeconds: number;
+  avgHR: number | null;
+  hrSamples: IngestSample[] | undefined;
+  maxHR: number;
+  medianRunHR: number | null;
+  baselineKnown: boolean;
+}): { workoutType: WorkoutType | null; confidence: number | null } {
+  const { durationSeconds, avgHR, hrSamples, maxHR, medianRunHR, baselineKnown } = args;
+
+  // HR is the only trustworthy channel indoors. Without it, don't guess.
+  if (avgHR === null) {
+    return { workoutType: null, confidence: null };
+  }
+
+  // Indoors we never exceed this: pace and power are absent or estimated.
+  const cap = baselineKnown ? 0.65 : 0.5;
+
+  // Prefer the runner's own habitual running HR. A fraction of *observed* max
+  // is the fallback, and a poor one — it labeled a 121 bpm treadmill run
+  // "tempo" because this runner's observed max (153) is really just their
+  // hardest easy run, putting the zone-3 floor at ~119.
+  if (medianRunHR !== null && medianRunHR > 0) {
+    const effortRatio = avgHR / medianRunHR;
+
+    if (effortRatio >= INDOOR_HR.TEMPO_RATIO) {
+      const inBand = fractionInZone(hrSamples, INDOOR_HR.TEMPO_RATIO * medianRunHR, Infinity);
+      if (inBand >= 0.5) {
+        return { workoutType: "tempo", confidence: Math.min(cap, 0.55 + inBand * 0.1) };
+      }
+      return { workoutType: "moderate", confidence: Math.min(cap, 0.45) };
+    }
+    if (effortRatio >= INDOOR_HR.MODERATE_RATIO) {
+      return { workoutType: "moderate", confidence: Math.min(cap, 0.45) };
+    }
+    if (durationSeconds >= INDOOR_HR.LONG_SECONDS) {
+      return { workoutType: "long", confidence: Math.min(cap, 0.6) };
+    }
+    if (effortRatio < INDOOR_HR.RECOVERY_RATIO) {
+      return { workoutType: "recovery", confidence: Math.min(cap, 0.5) };
+    }
+    return { workoutType: "easy", confidence: Math.min(cap, 0.6) };
+  }
+
+  // No HR history yet — fall back to fraction of observed max, conservatively.
+  if (maxHR <= 0) return { workoutType: null, confidence: null };
+  const effortFraction = avgHR / maxHR;
+  if (durationSeconds >= INDOOR_HR.LONG_SECONDS) {
+    return { workoutType: "long", confidence: 0.45 };
+  }
+  if (effortFraction >= INDOOR_HR.FALLBACK_TEMPO_FLOOR) {
+    return { workoutType: "moderate", confidence: 0.35 };
+  }
+  return { workoutType: "easy", confidence: 0.4 };
+}
+
+/** Indoor classification bands, as multiples of the runner's median run HR. */
+const INDOOR_HR = {
+  /** Below this multiple of habitual running HR, the session was a recovery. */
+  RECOVERY_RATIO: 0.90,
+  /** At or above this, harder than habitual — but not yet tempo. */
+  MODERATE_RATIO: 1.06,
+  /** At or above this, and sustained, the session was a tempo. */
+  TEMPO_RATIO: 1.10,
+  LONG_SECONDS: 90 * 60,
+  /** Only used when there is no HR history to compare against. */
+  FALLBACK_TEMPO_FLOOR: 0.8,
+} as const;
+
 function classifyWorkout(args: {
   distanceMiles: number | null;
   durationSeconds: number;
@@ -953,8 +1108,21 @@ function classifyWorkout(args: {
   avgPace: number | null;
   hrSamples: IngestSample[] | undefined;
   baseline: UserBaseline | null;
+  isIndoor?: boolean;
 }): { workoutType: WorkoutType | null; confidence: number | null } {
   const { distanceMiles, avgHR, avgPace, hrSamples, baseline } = args;
+
+  // Indoor runs are decided on HR + duration; distance/pace are estimates.
+  if (args.isIndoor) {
+    return classifyIndoor({
+      durationSeconds: args.durationSeconds,
+      avgHR,
+      hrSamples,
+      maxHR: baseline?.observed_max_hr_bpm ?? 190,
+      medianRunHR: baseline?.median_run_hr_bpm_30d ?? null,
+      baselineKnown: baseline?.median_run_hr_bpm_30d != null,
+    });
+  }
 
   // Without distance there's nothing to classify on — bail.
   if (distanceMiles === null || distanceMiles <= 0) {

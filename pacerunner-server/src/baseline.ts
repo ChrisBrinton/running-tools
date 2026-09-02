@@ -84,11 +84,37 @@ export function computeUserBaseline(
     medianEasyPace = median(easyPaces);
   }
 
+  // --- median average-HR across recent runs ------------------------------
+  // The classifier's reference point for "what does effort look like for THIS
+  // runner". Independent of observed max HR, which is unreliable for anyone who
+  // never records an all-out effort.
+  const hrRows = store.db.prepare(`
+    SELECT summary_json
+    FROM workouts
+    WHERE user_id = ?
+      AND start_time >= ?
+      AND summary_json IS NOT NULL
+      AND (? IS NULL OR id != ?)
+  `).all(userID, since, excludeWorkoutID, excludeWorkoutID) as Array<{
+    summary_json: string;
+  }>;
+
+  const runHRs: number[] = [];
+  for (const r of hrRows) {
+    try {
+      const s = JSON.parse(r.summary_json);
+      const avgHR = typeof s.avg_heart_rate_bpm === "number" ? s.avg_heart_rate_bpm : null;
+      if (avgHR !== null && avgHR > 0) runHRs.push(avgHR);
+    } catch { /* skip malformed summary */ }
+  }
+  const medianRunHR = median(runHRs);
+
   return {
     observed_max_hr_bpm: maxHR !== null ? Math.round(maxHR) : null,
     median_workout_miles_30d: medianMiles !== null ? Math.round(medianMiles * 100) / 100 : null,
     median_easy_pace_seconds_per_mile_30d:
       medianEasyPace !== null ? Math.round(medianEasyPace * 10) / 10 : null,
+    median_run_hr_bpm_30d: medianRunHR !== null ? Math.round(medianRunHR) : null,
   };
 }
 
