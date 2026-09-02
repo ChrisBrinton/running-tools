@@ -142,6 +142,31 @@ public final class WorkoutManager: NSObject, WorkoutManagerProtocol {
     // Flag to prevent multiple completion announcements
     private var hasAnnouncedCompletion = false
 
+    /// Logged once per neutral hold, when the metronome stops holding neutral
+    /// and starts directing faster/slower.
+    private var hasLoggedMetronomeDirectionStart = false
+
+    /// Pace change between consecutive segments, in seconds per mile, that counts
+    /// as "the pace varies a lot" and warrants treating the transition like the
+    /// start of a new run. A warm-up→tempo jump is far past this; drift between
+    /// two similar segments is not.
+    private static let segmentResetPaceDeltaSeconds = 20
+
+    /// Share of a segment's estimated duration the neutral hold may consume.
+    /// Without this cap a short interval would be neutral end to end, since the
+    /// shortest averaging window (120s default) outlasts the segment itself.
+    private static let neutralHoldSegmentFraction: Double = 0.5
+
+    /// Set inside the state lock when a transition warrants clearing the pace
+    /// windows; acted on after the lock is released. `paceCalculator.reset()`
+    /// publishes synchronously into `handlePaceUpdate`, which takes the same
+    /// non-recursive lock — calling it inside would deadlock.
+    private var pendingPaceWindowReset = false
+
+    /// True while the current segment is running on windows that were cleared at
+    /// its transition. Voice then waits for the refill instead of a flat 30s.
+    private var windowsResetForCurrentSegment = false
+
     /// Debug log for capturing timing and sync events
     private var debugLog = DebugLog()
 
@@ -420,6 +445,12 @@ public final class WorkoutManager: NSObject, WorkoutManagerProtocol {
                 interval: settings.emphasisBeatInterval,
                 audioBeatsEnabled: settings.audioBeatsEnabled
             )
+            // Begin neutral: the opening beats demonstrate footfall rhythm, they
+            // do not direct pace. handlePaceUpdate lifts this once the shortest
+            // window has filled — but no pace update has arrived yet, so the
+            // starting state has to be set here.
+            audioEngine.setEmphasisBeatsSuppressed(true)
+            audioEngine.setEmphasisBeatMode(0)
             try audioEngine.startTempoBeats(bpm: effectiveBPM)
             // Start metronome immediately at full volume
             audioEngine.setMetronomeVolume(1.0)
@@ -1214,6 +1245,55 @@ public final class WorkoutManager: NSObject, WorkoutManagerProtocol {
         if shouldAutoEnd {
             handleAutoEnd()
         }
+
+        // Likewise outside the lock: resetting the calculator publishes a nil
+        // pace synchronously, which re-enters handlePaceUpdate.
+        if pendingPaceWindowReset {
+            pendingPaceWindowReset = false
+            restartPaceWindowsForSegmentTransition()
+        }
+    }
+
+    /// Clears the pace windows so a new segment starts from a clean slate, and
+    /// re-arms the neutral hold so guidance stays quiet until the shortest
+    /// window has refilled.
+    private func restartPaceWindowsForSegmentTransition() {
+        // handlePaceUpdate reads these under the lock, and pace samples can be
+        // delivered from the HealthKit path on another thread.
+        stateLock.lock()
+        windowsResetForCurrentSegment = true
+        hasLoggedMetronomeDirectionStart = false
+        let label = stateSubject.value?.currentSegment?.label ?? "unknown"
+        let targetPace = stateSubject.value?.targetPace.formatted ?? "nil"
+        stateLock.unlock()
+
+        debugLog.log(category: "segment", message: "Pace windows restarted for new segment", data: [
+            "segment": label,
+            "targetPace": targetPace
+        ])
+
+        // Demonstrate immediately rather than waiting for the next pace update.
+        audioEngine.setEmphasisBeatsSuppressed(true)
+        audioEngine.setEmphasisBeatMode(0)
+
+        // Must stay outside the lock: reset() publishes a nil pace synchronously,
+        // re-entering handlePaceUpdate.
+        paceCalculator.reset()
+    }
+
+    /// How long guidance holds neutral before it starts directing pace.
+    ///
+    /// Normally the shortest averaging window, so direction is only ever driven
+    /// by a window that has actually filled. Capped at a fraction of the current
+    /// segment's estimated duration so short intervals still get guidance.
+    private func neutralHoldSeconds(state: WorkoutState, settings: AppSettings) -> Double {
+        let shortestWindow = Double(settings.fastAverageSeconds)
+
+        guard let segment = state.currentSegment else { return shortestWindow }
+        let estimatedDuration = segment.distance.meters * segment.pace.secondsPerMeter
+        guard estimatedDuration > 0 else { return shortestWindow }
+
+        return min(shortestWindow, estimatedDuration * Self.neutralHoldSegmentFraction)
     }
 
     // MARK: - Pace Subscription
@@ -1274,9 +1354,33 @@ public final class WorkoutManager: NSObject, WorkoutManagerProtocol {
 
         let settings = settingsProvider()
 
+        // Hold the metronome neutral until the shortest averaging window has
+        // actually filled. A window reports a pace once it has `minSamples`
+        // (3) samples, so without this gate the metronome starts directing
+        // faster/slower a few seconds into the run, off a handful of GPS points.
+        let neutralHold = neutralHoldSeconds(state: state, settings: settings)
+        let shortestWindowFilled = paceCalculator.movingTimeSpan >= neutralHold
+
+        if shortestWindowFilled && !hasLoggedMetronomeDirectionStart {
+            hasLoggedMetronomeDirectionStart = true
+            debugLog.log(category: "metronome", message: "Neutral hold ended, pace direction enabled", data: [
+                "neutralHold": String(format: "%.0fs", neutralHold),
+                "shortestWindow": "\(settings.fastAverageSeconds)s",
+                "movingTimeSpan": String(format: "%.0fs", paceCalculator.movingTimeSpan),
+                "segment": state.currentSegment?.label ?? "none",
+                "elapsed": String(format: "%.0f", state.elapsedTime)
+            ])
+        }
+
+        // While holding neutral the beat demonstrates footfall rhythm, so every
+        // beat sounds the same — mode 0 alone is not enough, it still plays the
+        // distinct emphasis tone.
+        audioEngine.setEmphasisBeatsSuppressed(!shortestWindowFilled)
+
         // Adaptive metronome volume and pitch based on pace deviation
-        // When off, metronome is always at full volume with normal pitch
-        if settings.adaptiveMetronomeVolume, let mediumPace = state.paceWindows.mediumPace {
+        // When off (or still holding neutral), the metronome is at full volume
+        // with normal pitch and no directional emphasis.
+        if settings.adaptiveMetronomeVolume, shortestWindowFilled, let mediumPace = state.paceWindows.mediumPace {
             let signedDeviation = mediumPace.totalSeconds - state.targetPace.totalSeconds
             let deviation = abs(signedDeviation)
             audioEngine.updateVolumeForDeviation(
@@ -1304,9 +1408,14 @@ public final class WorkoutManager: NSObject, WorkoutManagerProtocol {
         // 2. Medium pace average has filled up (enough data for reliable alerts)
         let mediumAverageFilled = state.elapsedTime >= Double(settings.mediumAverageSeconds)
 
-        // Brief grace period after segment transitions for pace averages to adjust
+        // Grace period after segment transitions for pace averages to adjust.
+        // When the windows were cleared for this segment there is no history to
+        // "adjust" — wait for the same refill the metronome waits for, so the two
+        // start directing together instead of ~90s apart.
         let segmentGracePeriodActive: Bool
-        if let transitionTime = lastSegmentTransitionTime {
+        if windowsResetForCurrentSegment {
+            segmentGracePeriodActive = !shortestWindowFilled
+        } else if let transitionTime = lastSegmentTransitionTime {
             segmentGracePeriodActive = Date().timeIntervalSince(transitionTime) < 30.0
         } else {
             segmentGracePeriodActive = false
@@ -1354,14 +1463,14 @@ public final class WorkoutManager: NSObject, WorkoutManagerProtocol {
         guard let state = currentState else { return }
 
         // Calculate final split pace and average pace
-        let finalSplitPace = state.splitPace?.formatted ?? "unknown"
+        let finalSplitPace = state.splitPace?.spoken ?? "unknown"
 
         // Calculate average pace for entire workout
         let avgPace: String
         if state.distanceCovered > 0 && state.elapsedTime > 0 {
             let secondsPerMeter = state.elapsedTime / state.distanceCovered
             if let pace = Pace(secondsPerMeter: secondsPerMeter) {
-                avgPace = pace.formatted
+                avgPace = pace.spoken
             } else {
                 avgPace = "unknown"
             }
@@ -1488,9 +1597,20 @@ public final class WorkoutManager: NSObject, WorkoutManagerProtocol {
 
             let nextSegment = segments[state.currentSegmentIndex]
 
-            // Voice announce segment transition
-            let paceFormatted = nextSegment.pace.formatted
-            audioEngine.playImportantAlert("\(completedSegment.label) complete. Starting \(nextSegment.label) at \(paceFormatted)")
+            // Voice announce segment transition (spoken form — never `formatted`)
+            let paceSpoken = nextSegment.pace.spoken
+            audioEngine.playImportantAlert("\(completedSegment.label) complete. Starting \(nextSegment.label) at \(paceSpoken)")
+
+            // A large pace change means the previous segment's pace history is
+            // actively misleading — the medium window (240s default) would keep
+            // reporting warm-up pace minutes into a tempo block. Restart the
+            // windows so the new segment converges like the start of a new run.
+            let paceDelta = abs(nextSegment.pace.totalSeconds - completedSegment.pace.totalSeconds)
+            if paceDelta >= Self.segmentResetPaceDeltaSeconds {
+                pendingPaceWindowReset = true
+            } else {
+                windowsResetForCurrentSegment = false
+            }
 
             // Update metronome BPM if cadence changes
             let settings = settingsProvider()
@@ -1556,8 +1676,8 @@ public final class WorkoutManager: NSObject, WorkoutManagerProtocol {
                 // Announce mile completion with pace if enabled (important - bypasses throttle)
                 let settings = settingsProvider()
                 if settings.announceMileMarkers {
-                    let paceFormatted = pace.formatted
-                    audioEngine.playImportantAlert("Mile \(completedMile) complete. Pace \(paceFormatted)")
+                    let paceSpoken = pace.spoken
+                    audioEngine.playImportantAlert("Mile \(completedMile) complete. Pace \(paceSpoken)")
                 }
             } else {
                 // Fallback: announce without pace if splitPace calculation failed
@@ -1677,6 +1797,9 @@ public final class WorkoutManager: NSObject, WorkoutManagerProtocol {
         userTapTime = nil
         mileTracker.reset()
         hasAnnouncedCompletion = false
+        hasLoggedMetronomeDirectionStart = false
+        pendingPaceWindowReset = false
+        windowsResetForCurrentSegment = false
         useHealthKitDistance = false
         hasHealthKitStartTimeSync = false
         healthKitFallbackToGPS = false

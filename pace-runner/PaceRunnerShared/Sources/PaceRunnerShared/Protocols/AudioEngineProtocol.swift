@@ -68,6 +68,14 @@ public protocol AudioEngineProtocol: AnyObject {
     /// - Parameter mode: 1 = upbeat (speed up), -1 = downbeat (slow down), 0 = normal
     func setEmphasisBeatMode(_ mode: Int)
 
+    /// Suppresses the emphasis tone so every beat sounds identical.
+    ///
+    /// Mode 0 is not neutral to the ear — it still plays the distinct emphasis
+    /// tone. Use this while the metronome demonstrates footfall rhythm rather
+    /// than directing pace.
+    /// - Parameter suppressed: true to make emphasis slots use the regular tone.
+    func setEmphasisBeatsSuppressed(_ suppressed: Bool)
+
     /// Configures emphasis beat settings
     /// - Parameters:
     ///   - enabled: Whether emphasis beats are enabled

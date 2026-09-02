@@ -36,6 +36,14 @@ public protocol PaceCalculatorProtocol: AnyObject {
     var threeMinutePace: Pace? { get }
     var trailingMilePace: Pace? { get }
 
+    /// Moving-time span covered by the retained samples, in seconds.
+    ///
+    /// Distinct from a window having a *pace*: `fastPace`/`mediumPace` report a
+    /// value after only a few samples, so a caller that needs "this window is
+    /// actually full" must compare against this instead of a non-nil pace.
+    /// Measured in moving time, so paused and glitch spans do not count.
+    var movingTimeSpan: TimeInterval { get }
+
     /// Configure the averaging windows
     /// - Parameters:
     ///   - fastSeconds: Fast window duration in seconds (default 120)

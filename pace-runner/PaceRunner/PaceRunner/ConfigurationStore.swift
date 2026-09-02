@@ -143,6 +143,20 @@ class ConfigurationStore: ObservableObject {
         UserDefaults.standard.removeObject(forKey: Self.storageKey)
     }
 
+    // MARK: - Storage Access
+
+    /// Reads the saved configurations without constructing a store.
+    ///
+    /// Needed at app launch, where the version-change sync runs before the
+    /// `StateObject` store exists.
+    static func loadStoredConfigurations() -> [RunConfiguration] {
+        guard let data = UserDefaults.standard.data(forKey: storageKey),
+              let configs = try? JSONDecoder().decode([RunConfiguration].self, from: data) else {
+            return []
+        }
+        return configs
+    }
+
     // MARK: - Private Methods
 
     private func loadConfigurations() {

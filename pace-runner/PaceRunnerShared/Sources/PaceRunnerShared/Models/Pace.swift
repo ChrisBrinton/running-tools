@@ -45,6 +45,19 @@ public struct Pace: Codable, Equatable, Comparable {
         String(format: "%d:%02d", minutes, seconds)
     }
 
+    /// Pace phrased for text-to-speech announcements
+    ///
+    /// `formatted` must never be spoken: AVSpeechSynthesizer parses "9:00" as a
+    /// clock time and reads it as "nine o'clock". This spells out the units.
+    /// - Returns: e.g. "9 minutes per mile", "8 minutes 42 seconds per mile"
+    public var spoken: String {
+        guard seconds > 0 else {
+            return "\(minutes) minutes per mile"
+        }
+        let secondUnit = seconds == 1 ? "second" : "seconds"
+        return "\(minutes) minutes \(seconds) \(secondUnit) per mile"
+    }
+
     // MARK: - Initialization
 
     /// Creates a new Pace

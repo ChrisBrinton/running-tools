@@ -106,6 +106,17 @@ public final class PaceCalculator: PaceCalculatorProtocol {
         calculateDistanceBasedPace(distanceWindow: slowWindowMeters)
     }
 
+    /// Moving-time span covered by the retained samples.
+    ///
+    /// Samples are stored in moving-time coordinates, so this excludes paused
+    /// and excised-glitch time. Sample retention (20 min) is far longer than any
+    /// configurable time window, so this is a valid "has the window filled?"
+    /// signal for the windows themselves.
+    public var movingTimeSpan: TimeInterval {
+        guard let first = samples.first, let last = samples.last else { return 0 }
+        return last.timestamp.timeIntervalSince(first.timestamp)
+    }
+
     // MARK: - Legacy Accessors (backward compatibility)
 
     public var oneMinutePace: Pace? {

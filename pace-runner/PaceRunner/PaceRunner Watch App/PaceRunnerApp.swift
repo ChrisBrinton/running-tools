@@ -36,6 +36,20 @@ struct PaceRunner_Watch_AppApp: App {
             paceCalculator: PaceCalculator(),
             audioEngine: AudioEngine()
         )
+        // First launch after an install or update: the dirty-latch model leaves
+        // the phone believing it already pushed configs, so nothing arrives and
+        // the watch sits empty. Ask the phone for everything instead of waiting
+        // for an unrelated change to dirty the latch. Requesting (rather than
+        // pushing) is deliberate — the phone guards against answering with an
+        // empty set, which would wipe configs created on the watch.
+        if let launchKind = AppVersionTracker.consumeLaunchKind() {
+            print("[PaceRunner Watch] New version launch (\(launchKind)) — requesting all data")
+            // The session has just been activated and is rarely reachable yet;
+            // requestAllData falls back to transferUserInfo, which is queued and
+            // delivered once the phone is available.
+            _ = syncManager.requestAllData()
+        }
+
         _configurationStore = StateObject(wrappedValue: ConfigurationStore(syncManager: syncManager))
         _workoutStore = StateObject(wrappedValue: WatchWorkoutStore(syncManager: syncManager))
         _syncStatusModel = StateObject(wrappedValue: WatchSyncStatusModel(syncManager: syncManager))

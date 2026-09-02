@@ -71,6 +71,18 @@ struct PaceRunnerApp: App {
         // Sync settings to watch on startup
         syncManager.syncSettings(AppSettings.load())
 
+        // First launch after an install or update: push configs so a freshly
+        // updated watch is not left waiting on a latch that already looks clean.
+        // Only when we actually have configs — syncAllConfigurations is a full
+        // REPLACE on the watch, so an empty push would wipe configs created there.
+        if let launchKind = AppVersionTracker.consumeLaunchKind() {
+            let configs = ConfigurationStore.loadStoredConfigurations()
+            print("[PaceRunnerApp] New version launch (\(launchKind)) — \(configs.count) configs to push")
+            if !configs.isEmpty {
+                syncManager.syncAllConfigurations(configs)
+            }
+        }
+
         // Request notification permission for workout sync alerts and
         // attach a delegate so notifications show up as foreground banners.
         UNUserNotificationCenter.current().delegate = ForegroundNotificationDelegate.shared
