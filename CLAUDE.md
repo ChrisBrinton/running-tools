@@ -101,6 +101,13 @@ To query the live server from a session, POST JSON-RPC to
   feature, a fix, a docs pass), keep commits atomic, and don't commit work that
   is half-finished or failing its tests. Committing several groupings from one
   stretch of work as separate commits is the norm, not the exception.
+- **Run the tests before every commit that touches code**, and say in the commit
+  message what was run and what passed. For app changes that means the
+  `PaceRunnerTests` suite plus both target builds; for server changes
+  `npm test` + `npm run typecheck` + `npm run build`. Docs-only commits are
+  exempt. If a test is failing for an unrelated known reason (see the flaky test
+  in `docs/pace-runner/V1.2-PLAN.md`), skip it explicitly and say so rather than
+  ignoring a red suite.
 - End commit messages with a `Co-Authored-By:`
   trailer naming **the model actually writing the commit** — substitute your own
   model name rather than copying an example, and include the context-window

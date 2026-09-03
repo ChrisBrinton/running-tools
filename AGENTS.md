@@ -43,9 +43,12 @@ Server:
   commit, without asking first: when a logical grouping of work is done and
   verified, land it. Judgment call rather than a hard rule — don't commit
   half-finished or failing work, and split a long stretch into several atomic
-  commits rather than one omnibus. Each commit message should carry a clear
-  summary of scope and how it was verified (which targets built, tests run,
-  what still needs on-device checks).
+  commits rather than one omnibus. Run the tests before every commit that
+  touches code — app: `PaceRunnerTests` + both target builds; server:
+  `npm test` + `npm run typecheck` + `npm run build`; docs-only commits are
+  exempt. Each commit message should carry a clear summary of scope and how it
+  was verified (which targets built, tests run, what still needs on-device
+  checks).
 - End commit messages with a `Co-Authored-By:` trailer naming **the model
   actually writing the commit**, not a fixed string — substitute your own model
   name and context-window label. Format:

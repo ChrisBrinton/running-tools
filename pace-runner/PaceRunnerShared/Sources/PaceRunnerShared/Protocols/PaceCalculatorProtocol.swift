@@ -62,6 +62,10 @@ public protocol PaceCalculatorProtocol: AnyObject {
     /// - Parameter pauseDuration: How long the workout was paused, in seconds.
     func notePauseGap(_ pauseDuration: TimeInterval)
 
+    /// Restart the time-based windows at a segment boundary, preserving the
+    /// sample history the distance-based master window needs.
+    func restartTimeWindows()
+
     /// Reset calculator state
     func reset()
 }

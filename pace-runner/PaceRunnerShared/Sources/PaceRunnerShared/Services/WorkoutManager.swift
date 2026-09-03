@@ -1276,9 +1276,10 @@ public final class WorkoutManager: NSObject, WorkoutManagerProtocol {
         audioEngine.setEmphasisBeatsSuppressed(true)
         audioEngine.setEmphasisBeatMode(0)
 
-        // Must stay outside the lock: reset() publishes a nil pace synchronously,
-        // re-entering handlePaceUpdate.
-        paceCalculator.reset()
+        // restartTimeWindows, NOT reset(): reset() also discards the sample
+        // history the distance-based master window needs, which blanked the
+        // rolling-mile readout so it duplicated the current mile split.
+        paceCalculator.restartTimeWindows()
     }
 
     /// How long guidance holds neutral before it starts directing pace.
