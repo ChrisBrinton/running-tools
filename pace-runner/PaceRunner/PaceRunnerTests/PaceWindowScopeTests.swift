@@ -251,4 +251,71 @@ final class PaceWindowScopeTests: XCTestCase {
         XCTAssertNil(calculator.fastPace,
             "the fast window must not report the previous segment's pace")
     }
+
+    // MARK: - Window diagnostics
+
+    /// The field that separates the two explanations for a locked-looking
+    /// rolling mile: if the master window has not filled, it is computing over
+    /// the same data as the current split.
+    func testMasterWindowSpanReportsAPartiallyFilledWindow() {
+        let start = Date()
+        var elapsed = 0.0
+        var distance = 0.0
+
+        // Half a mile in — the rolling mile cannot have filled yet.
+        for _ in 0..<Int(804.0 / mps) {
+            elapsed += 1
+            distance += mps
+            calculator.addSample(distance: distance, timestamp: start.addingTimeInterval(elapsed))
+        }
+
+        let d = calculator.windowDiagnostics
+        XCTAssertEqual(d.masterWindowMeters, 804, accuracy: 40,
+            "a half-mile-in window should report ~0.5 mi, got \(d.masterWindowMeters)m")
+        XCTAssertLessThan(d.masterWindowMeters, 1609.34,
+            "the master window must not claim to span a full mile before it has")
+        XCTAssertGreaterThan(d.sampleCount, 0)
+    }
+
+    func testMasterWindowSpanReportsAFullWindowOnceFilled() {
+        let start = Date()
+        var elapsed = 0.0
+        var distance = 0.0
+
+        // Two miles in — the trailing window should be pinned at ~1 mile.
+        for _ in 0..<Int(3218.0 / mps) {
+            elapsed += 1
+            distance += mps
+            calculator.addSample(distance: distance, timestamp: start.addingTimeInterval(elapsed))
+        }
+
+        let d = calculator.windowDiagnostics
+        XCTAssertEqual(d.masterWindowMeters, 1609.34, accuracy: 40,
+            "a filled master window should span ~1 mi, got \(d.masterWindowMeters)m")
+        XCTAssertEqual(d.masterWindowSeconds, 1609.34 / mps, accuracy: 20)
+    }
+
+    /// Diagnostics must survive a segment restart the same way the pace does —
+    /// the master window keeps its span, the fast window is cut back.
+    func testDiagnosticsReflectTheSegmentRestartAsymmetry() {
+        let start = Date()
+        var elapsed = 0.0
+        var distance = 0.0
+
+        for _ in 0..<Int(3218.0 / mps) {
+            elapsed += 1
+            distance += mps
+            calculator.addSample(distance: distance, timestamp: start.addingTimeInterval(elapsed))
+        }
+        let before = calculator.windowDiagnostics
+        XCTAssertGreaterThan(before.fastWindowSamples, 100)
+
+        calculator.restartTimeWindows()
+        let after = calculator.windowDiagnostics
+
+        XCTAssertEqual(after.masterWindowMeters, before.masterWindowMeters, accuracy: 1,
+            "the rolling-mile window must be untouched by a segment restart")
+        XCTAssertLessThanOrEqual(after.fastWindowSamples, 1,
+            "the fast window must be cut back to the restart anchor")
+    }
 }

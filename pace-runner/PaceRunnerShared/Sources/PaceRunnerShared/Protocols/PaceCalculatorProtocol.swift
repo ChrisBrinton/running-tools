@@ -12,6 +12,38 @@ import Combine
 /// - Slow window: Master pace - distance-based (configurable, default 1 mile)
 ///
 /// Constitution: <50ms computation time per sample
+/// A snapshot of what each pace window is actually covering.
+public struct PaceWindowDiagnostics: Equatable {
+    /// Total retained samples.
+    public let sampleCount: Int
+    /// Moving-time span the time-based windows may draw from.
+    public let movingTimeSpan: TimeInterval
+    /// Distance the distance-based master (rolling-mile) window actually spans.
+    /// Well under the configured window means it has not filled yet — the case
+    /// where the rolling mile legitimately duplicates the current mile split.
+    public let masterWindowMeters: Double
+    /// Moving time the master window spans.
+    public let masterWindowSeconds: TimeInterval
+    public let masterWindowSamples: Int
+    public let fastWindowSamples: Int
+
+    public init(
+        sampleCount: Int,
+        movingTimeSpan: TimeInterval,
+        masterWindowMeters: Double,
+        masterWindowSeconds: TimeInterval,
+        masterWindowSamples: Int,
+        fastWindowSamples: Int
+    ) {
+        self.sampleCount = sampleCount
+        self.movingTimeSpan = movingTimeSpan
+        self.masterWindowMeters = masterWindowMeters
+        self.masterWindowSeconds = masterWindowSeconds
+        self.masterWindowSamples = masterWindowSamples
+        self.fastWindowSamples = fastWindowSamples
+    }
+}
+
 public protocol PaceCalculatorProtocol: AnyObject {
     /// Publisher for smoothed pace updates (fast window)
     var pacePublisher: AnyPublisher<Pace?, Never> { get }
@@ -61,6 +93,10 @@ public protocol PaceCalculatorProtocol: AnyObject {
     /// forward to stay contiguous (in "moving time") with post-resume samples.
     /// - Parameter pauseDuration: How long the workout was paused, in seconds.
     func notePauseGap(_ pauseDuration: TimeInterval)
+
+    /// What each window is currently spanning — for diagnosing readouts that
+    /// look wrong (e.g. the rolling mile duplicating the current mile split).
+    var windowDiagnostics: PaceWindowDiagnostics { get }
 
     /// Restart the time-based windows at a segment boundary, preserving the
     /// sample history the distance-based master window needs.

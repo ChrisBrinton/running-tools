@@ -52,6 +52,7 @@ final class HealthKitPublisher: ObservableObject {
     private let pushedIDsKey = "publisher_pushed_workout_ids"
     private let pushedLogIDsKey = "publisher_pushed_log_ids"
     private let incompleteIDsKey = "publisher_incomplete_workout_ids"
+    private let notifiedIDsKey = "publisher_notified_workout_ids"
 
     /// How long after a workout ends we keep re-exporting it when its first
     /// push was sample-incomplete. HealthKit syncs a workout's running-dynamics
@@ -130,6 +131,33 @@ final class HealthKitPublisher: ObservableObject {
             UserDefaults.standard.set(Array(arr), forKey: incompleteIDsKey)
         }
     }
+
+    /// HK workout UUIDs the user has already been shown a "synced" banner for.
+    ///
+    /// Separate from `pushedWorkoutIDs` because a workout can legitimately be
+    /// pushed more than once (a partial payload superseded by a complete one),
+    /// and because two catch-up passes can interleave: this class is @MainActor
+    /// but `publishAll` suspends at `await pushOneWorkout`, so a second pass
+    /// that read the pending list before the first called `markPushed` will
+    /// push — and notify for — the same workout again. Notifying is a one-shot
+    /// per workout, forever.
+    private var notifiedWorkoutIDs: Set<String> {
+        get {
+            let arr = UserDefaults.standard.stringArray(forKey: notifiedIDsKey) ?? []
+            return Set(arr)
+        }
+        set {
+            let arr = Array(newValue).suffix(1000)
+            UserDefaults.standard.set(Array(arr), forKey: notifiedIDsKey)
+        }
+    }
+
+    /// True while an automatic catch-up pass is running. Foregrounding the app
+    /// can deliver several queued watch summaries at once, each scheduling its
+    /// own pass; without this they all run together and duplicate the work.
+    /// Only gates the automatic path — the manual Publish All button is never
+    /// skipped.
+    private var automaticPublishInFlight = false
 
     private var cancellables = Set<AnyCancellable>()
     private var foregroundObserver: NSObjectProtocol?
@@ -294,6 +322,12 @@ final class HealthKitPublisher: ObservableObject {
     /// (single workout, surface it). On launch foreground catch-up
     /// `notifyEach=false` so multiple unsynced workouts don't spam.
     private func publishPendingWorkouts(daysBack: Int, notifyEach: Bool = false) async {
+        guard !automaticPublishInFlight else {
+            print("[Publisher] automatic catch-up already running, skipping")
+            return
+        }
+        automaticPublishInFlight = true
+        defer { automaticPublishInFlight = false }
         _ = await publishAll(daysBack: daysBack, notifyEach: notifyEach)
     }
 
@@ -355,6 +389,7 @@ final class HealthKitPublisher: ObservableObject {
     func resetPushedHistory() {
         pushedWorkoutIDs = []
         incompletePushedIDs = []
+        notifiedWorkoutIDs = []
         totalPushedCount = 0
         lastSuccessfulPush = nil
         lastError = nil
@@ -369,6 +404,15 @@ final class HealthKitPublisher: ObservableObject {
     /// (see PaceRunnerApp.init); if the user denied permission this
     /// just no-ops silently.
     private func postWorkoutSyncNotification(for workout: HKWorkout) async {
+        let id = workout.uuid.uuidString
+        // One banner per workout, ever. Re-adding a delivered request with the
+        // same identifier posts a NEW banner rather than replacing it, so the
+        // identifier alone does not dedupe.
+        guard !notifiedWorkoutIDs.contains(id) else {
+            print("[Publisher] already notified for \(id), skipping")
+            return
+        }
+
         let center = UNUserNotificationCenter.current()
         let settings = await center.notificationSettings()
         guard settings.authorizationStatus == .authorized || settings.authorizationStatus == .provisional else {
@@ -387,6 +431,8 @@ final class HealthKitPublisher: ObservableObject {
         )
         do {
             try await center.add(request)
+            // Record only on success, so a failed banner can be retried.
+            notifiedWorkoutIDs.insert(id)
         } catch {
             print("[Publisher] notification add failed: \(error)")
         }

@@ -117,6 +117,42 @@ public final class PaceCalculator: PaceCalculatorProtocol {
         calculateDistanceBasedPace(distanceWindow: slowWindowMeters)
     }
 
+    /// What each window is actually spanning right now.
+    ///
+    /// The paces alone cannot distinguish "the rolling mile and the mile split
+    /// agree because the running was steady" from "the rolling-mile window is
+    /// not actually spanning a mile, so it is computing over the same data as
+    /// the split". This reports the spans so the two are separable in the log.
+    public var windowDiagnostics: PaceWindowDiagnostics {
+        guard let last = samples.last else {
+            return PaceWindowDiagnostics(
+                sampleCount: 0, movingTimeSpan: 0,
+                masterWindowMeters: 0, masterWindowSeconds: 0, masterWindowSamples: 0,
+                fastWindowSamples: 0
+            )
+        }
+
+        let masterCutoff = max(0, last.cumulativeDistance - slowWindowMeters)
+        let masterSamples = samples.filter { $0.cumulativeDistance >= masterCutoff }
+        let masterMeters = (masterSamples.last?.cumulativeDistance ?? 0)
+            - (masterSamples.first?.cumulativeDistance ?? 0)
+        let masterSeconds = (masterSamples.last?.timestamp ?? last.timestamp)
+            .timeIntervalSince(masterSamples.first?.timestamp ?? last.timestamp)
+
+        var fastCutoff = last.timestamp.addingTimeInterval(-fastWindowSeconds)
+        if let anchor = timeWindowAnchor, anchor > fastCutoff { fastCutoff = anchor }
+        let fastSamples = samples.filter { $0.timestamp >= fastCutoff }
+
+        return PaceWindowDiagnostics(
+            sampleCount: samples.count,
+            movingTimeSpan: movingTimeSpan,
+            masterWindowMeters: masterMeters,
+            masterWindowSeconds: masterSeconds,
+            masterWindowSamples: masterSamples.count,
+            fastWindowSamples: fastSamples.count
+        )
+    }
+
     /// Moving-time span covered by the retained samples.
     ///
     /// Samples are stored in moving-time coordinates, so this excludes paused

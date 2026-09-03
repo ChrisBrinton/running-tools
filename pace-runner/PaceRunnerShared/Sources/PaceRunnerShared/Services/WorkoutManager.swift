@@ -157,6 +157,20 @@ public final class WorkoutManager: NSObject, WorkoutManagerProtocol {
     /// shortest averaging window (120s default) outlasts the segment itself.
     private static let neutralHoldSegmentFraction: Double = 0.5
 
+    /// Elapsed time of the last `[windows]` diagnostic entry.
+    private var lastWindowLogElapsed: TimeInterval = -.infinity
+
+    /// Log `[windows]` on every pace update until this elapsed time. Set after a
+    /// resume so the post-pause behavior is captured at full resolution rather
+    /// than at the throttled cadence.
+    private var windowBurstLogUntilElapsed: TimeInterval = 0
+
+    /// Throttled cadence for the `[windows]` diagnostic, in seconds of moving time.
+    private static let windowLogIntervalSeconds: TimeInterval = 15
+
+    /// How long to log every update after a resume.
+    private static let windowBurstAfterResumeSeconds: TimeInterval = 120
+
     /// Set inside the state lock when a transition warrants clearing the pace
     /// windows; acted on after the lock is released. `paceCalculator.reset()`
     /// publishes synchronously into `handlePaceUpdate`, which takes the same
@@ -510,6 +524,12 @@ public final class WorkoutManager: NSObject, WorkoutManagerProtocol {
             // time — slide their history forward so the master (distance-based)
             // average doesn't get dragged slow by the break.
             paceCalculator.notePauseGap(pauseDuration)
+
+            // Capture every update for the next two minutes — the window
+            // straddling the pause boundary is where a post-resume jump shows.
+            windowBurstLogUntilElapsed =
+                (stateSubject.value?.elapsedTime ?? 0) + Self.windowBurstAfterResumeSeconds
+            lastWindowLogElapsed = -.infinity
 
             // Log resume event
             debugLog.logPause("Workout resumed", data: [
@@ -1355,6 +1375,8 @@ public final class WorkoutManager: NSObject, WorkoutManagerProtocol {
 
         let settings = settingsProvider()
 
+        logPaceWindowsIfDue(state: state, settings: settings)
+
         // Hold the metronome neutral until the shortest averaging window has
         // actually filled. A window reports a pace once it has `minSamples`
         // (3) samples, so without this gate the metronome starts directing
@@ -1513,6 +1535,47 @@ public final class WorkoutManager: NSObject, WorkoutManagerProtocol {
     ///   - targetPace: Target pace for current mile
     ///   - tolerance: Pace tolerance in seconds
     /// - Returns: Appropriate voice message, or nil if filtered or all in tolerance
+    /// Emits a `[windows]` entry carrying every pace readout AND what each
+    /// window is actually spanning.
+    ///
+    /// Added because a run where the rolling mile and the mile split appeared
+    /// locked together could not be diagnosed after the fact: the log recorded
+    /// GPS samples and quarter-mile checkpoints, but on a HealthKit-driven run
+    /// those are not what the calculator consumes, and no window values were
+    /// recorded at all. `masterWindowMeters` is the decisive field — a rolling
+    /// mile spanning well under a mile is computing over the same data as the
+    /// current split, which looks identical to steady running from the paces
+    /// alone.
+    private func logPaceWindowsIfDue(state: WorkoutState, settings: AppSettings) {
+        let elapsed = state.elapsedTime
+        let inBurst = elapsed <= windowBurstLogUntilElapsed
+        guard inBurst || elapsed - lastWindowLogElapsed >= Self.windowLogIntervalSeconds else {
+            return
+        }
+        lastWindowLogElapsed = elapsed
+
+        let d = paceCalculator.windowDiagnostics
+        let windows = state.paceWindows
+        debugLog.log(category: "windows", message: "Pace windows", data: [
+            "elapsed": String(format: "%.0f", elapsed),
+            "miles": String(format: "%.3f", state.distanceCovered / 1609.34),
+            "split": state.splitPace?.formatted ?? "nil",
+            "rollingMile": windows.slowPace?.formatted ?? "nil",
+            "medium": windows.mediumPace?.formatted ?? "nil",
+            "fast": windows.fastPace?.formatted ?? "nil",
+            // The separator between "steady running" and "window not filled".
+            "masterSpanMi": String(format: "%.3f", d.masterWindowMeters / 1609.34),
+            "masterSpanSec": String(format: "%.0f", d.masterWindowSeconds),
+            "masterSamples": String(d.masterWindowSamples),
+            "fastSamples": String(d.fastWindowSamples),
+            "sampleCount": String(d.sampleCount),
+            "movingTimeSpan": String(format: "%.0f", d.movingTimeSpan),
+            "mileStartMi": String(format: "%.3f", state.currentMileSplitStart / 1609.34),
+            "source": useHealthKitDistance && !healthKitFallbackToGPS ? "HealthKit" : "GPS",
+            "burst": inBurst ? "1" : "0"
+        ])
+    }
+
     private func cascadingVoiceAlert(
         paceWindows: PaceWindows,
         targetPace: Pace,
@@ -1799,6 +1862,8 @@ public final class WorkoutManager: NSObject, WorkoutManagerProtocol {
         mileTracker.reset()
         hasAnnouncedCompletion = false
         hasLoggedMetronomeDirectionStart = false
+        lastWindowLogElapsed = -.infinity
+        windowBurstLogUntilElapsed = 0
         pendingPaceWindowReset = false
         windowsResetForCurrentSegment = false
         useHealthKitDistance = false
