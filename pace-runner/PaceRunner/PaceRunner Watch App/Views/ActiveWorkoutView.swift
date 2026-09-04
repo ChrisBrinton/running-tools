@@ -9,7 +9,7 @@ struct ActiveWorkoutView: View {
             // 2x2 Pace Grid (Slow=master, Medium, Fast)
             VStack(spacing: 4) {
                 HStack(spacing: 12) {
-                    paceWindow(label: "Spt", pace: viewModel.state.paceWindows.splitPace)
+                    paceWindow(label: "Spt", pace: viewModel.state.splitPace)
                     paceWindow(label: viewModel.slowPaceLabel, pace: viewModel.state.paceWindows.slowPace)
                 }
                 HStack(spacing: 12) {

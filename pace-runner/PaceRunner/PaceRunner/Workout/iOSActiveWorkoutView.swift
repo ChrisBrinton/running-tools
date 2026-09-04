@@ -26,7 +26,7 @@ struct iOSActiveWorkoutView: View {
             // Pace grid (2x2)
             VStack(spacing: 12) {
                 HStack(spacing: 12) {
-                    paceWindow(label: "Split", pace: viewModel.state.paceWindows.splitPace)
+                    paceWindow(label: "Split", pace: viewModel.state.splitPace)
                     paceWindow(label: viewModel.slowPaceLabel, pace: viewModel.state.paceWindows.slowPace)
                 }
                 HStack(spacing: 12) {

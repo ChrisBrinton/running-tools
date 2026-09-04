@@ -28,8 +28,14 @@ public struct PaceWindows: Equatable {
 
     // MARK: - Legacy Properties (backward compatibility)
 
-    /// Current mile split pace (distance/time since last mile marker)
-    public var splitPace: Pace? { slowPace }
+    // NOTE: there is deliberately no `splitPace` here.
+    //
+    // It used to exist as `slowPace` under a doc comment claiming it was
+    // "distance/time since last mile marker". It was not — it returned the
+    // trailing-mile window, so both watch and phone rendered the current mile
+    // split and the trailing mile as the same number, always and exactly.
+    // The real per-mile split is `WorkoutState.splitPace`, computed from
+    // `currentMileSplitStart`/`currentMileSplitStartTime`. Bind to that.
 
     /// Trailing mile pace - maps to slow pace
     public var trailingMilePace: Pace? { slowPace }
@@ -58,20 +64,10 @@ public struct PaceWindows: Equatable {
         self.lastMilePace = lastMilePace
     }
 
-    /// Legacy initializer for backward compatibility
-    public init(
-        splitPace: Pace? = nil,
-        trailingMilePace: Pace? = nil,
-        lastMilePace: Pace? = nil,
-        threeMinPace: Pace? = nil,
-        oneMinPace: Pace? = nil
-    ) {
-        // Map old names to new: slow=trailingMile, medium=3min, fast=1min
-        self.slowPace = trailingMilePace ?? splitPace
-        self.mediumPace = threeMinPace
-        self.fastPace = oneMinPace
-        self.lastMilePace = lastMilePace
-    }
+    // The legacy initializer (trailingMilePace:/threeMinPace:/oneMinPace:) was
+    // removed with the `splitPace` alias: it had no call sites, and with the
+    // conflated parameter gone its all-default signature made `PaceWindows()`
+    // ambiguous against the primary initializer.
 
     /// Returns the most important pace window that's out of tolerance
     /// - Parameters:
