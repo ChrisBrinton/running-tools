@@ -188,68 +188,98 @@ final class PaceWindowScopeTests: XCTestCase {
             + "(rolling \(midMile.formatted), split \(Int(currentSplitPace))s)")
     }
 
-    /// The regression: restarting the pace windows at a segment transition must
-    /// not blank the distance-based rolling mile.
+    /// The corrected contract: a segment restart clears EVERY window, master
+    /// included, so the new segment starts like a new run.
     ///
-    /// The transition in a "1mi Easy + 4mi Tempo" config lands on the mile-1
-    /// boundary, the same point the mile split restarts. If the restart discards
-    /// the sample history, the rolling mile is then computed over exactly the
-    /// data the current split covers and the two read identically for a full
-    /// mile — which is what showed up on the watch.
-    func testSegmentRestartKeepsTheRollingMileIntact() {
+    /// Measured from the Sep 8 "1mi Easy + 4mi Tempo" run, where sparing the
+    /// master window left the rolling mile reading 10:24 → 9:56 → 9:34 for a
+    /// full mile (536 s) after a 10:40 → 9:20 transition, while fast and medium
+    /// had already settled on tempo pace.
+    func testSegmentRestartClearsTheRollingMileToo() {
         let start = Date()
         var elapsed = 0.0
         var distance = 0.0
 
-        // Mile 1 easy.
-        let easyMps = 2.2
-        for _ in 0..<Int(1609.34 / easyMps) {
+        // A full mile of easy running, so the master window is genuinely full.
+        let easyMps = 1609.34 / 640.0
+        for _ in 0..<640 {
+            elapsed += 1
+            distance += easyMps
+            calculator.addSample(distance: distance, timestamp: start.addingTimeInterval(elapsed))
+        }
+        XCTAssertNotNil(calculator.slowPace, "master window should be populated pre-transition")
+
+        calculator.restartWindowsForSegment()
+
+        XCTAssertNil(calculator.slowPace,
+            "the rolling mile must restart at the transition, not carry the previous segment")
+        XCTAssertNil(calculator.fastPace)
+        XCTAssertEqual(calculator.movingTimeSpan, 0)
+        XCTAssertEqual(calculator.windowDiagnostics.masterWindowMeters, 0, accuracy: 0.001)
+    }
+
+    /// The consequence that actually mattered: after the restart the master
+    /// window must report the NEW segment's pace, because the voice cues consult
+    /// it first. Previously it called for "speed up" at 9:56 while the runner was
+    /// already running 8:22.
+    func testMasterWindowReportsTheNewSegmentPaceAfterARestart() {
+        let start = Date()
+        var elapsed = 0.0
+        var distance = 0.0
+
+        let easyMps = 1609.34 / 640.0    // 10:40/mi
+        for _ in 0..<640 {
             elapsed += 1
             distance += easyMps
             calculator.addSample(distance: distance, timestamp: start.addingTimeInterval(elapsed))
         }
 
-        // Segment transition into tempo: the time-based windows must forget the
-        // warm-up, the distance-based rolling mile must not.
-        calculator.restartTimeWindows()
+        calculator.restartWindowsForSegment()
 
-        // Half a mile of tempo.
-        let tempoMps = 3.2
-        for _ in 0..<Int(804.0 / tempoMps) {
+        // Two minutes of tempo — the point at which the neutral hold lifts and
+        // the cues start acting on these numbers.
+        let tempoMps = 1609.34 / 560.0   // 9:20/mi
+        for _ in 0..<120 {
             elapsed += 1
             distance += tempoMps
             calculator.addSample(distance: distance, timestamp: start.addingTimeInterval(elapsed))
         }
 
-        guard let rollingMile = calculator.slowPace else {
-            return XCTFail("rolling mile went nil after the segment restart")
+        guard let master = calculator.slowPace else {
+            return XCTFail("expected a master pace two minutes into the new segment")
         }
-        // Half a mile of tempo blended with half a mile of warm-up sits well
-        // slower than the tempo split alone.
-        let tempoSplit = 1609.34 / tempoMps
-        XCTAssertGreaterThan(Double(rollingMile.totalSeconds), tempoSplit + 20,
-            "the rolling mile must still span the warm-up, not collapse onto the "
-            + "current segment (rolling \(rollingMile.formatted), tempo split "
-            + "\(Int(tempoSplit))s)")
+        XCTAssertEqual(master.totalSeconds, 560, accuracy: 30,
+            "master must reflect tempo, not the warm-up it replaced (got \(master.formatted))")
+        XCTAssertLessThan(master.totalSeconds, 600,
+            "a master still reading easy pace here is what produced wrong \"speed up\" cues")
     }
 
-    /// The other half of the contract: the restart DOES clear the time-based
-    /// windows, so the neutral hold re-arms and fast/medium stop reporting the
-    /// previous segment's pace.
-    func testSegmentRestartStillClearsTheTimeBasedWindows() {
+    /// Carried cumulative distance must not read as a phantom fast pace: the
+    /// restart clears samples but keeps the last-accepted anchors.
+    func testSegmentRestartDoesNotProduceAPhantomPace() {
         let start = Date()
         var elapsed = 0.0
         var distance = 0.0
 
-        run(seconds: 300, from: start, elapsed: &elapsed, distance: &distance)
-        XCTAssertGreaterThanOrEqual(calculator.movingTimeSpan, 120)
+        for _ in 0..<640 {
+            elapsed += 1
+            distance += 1609.34 / 640.0
+            calculator.addSample(distance: distance, timestamp: start.addingTimeInterval(elapsed))
+        }
+        XCTAssertGreaterThan(distance, 1600, "should be a mile in before the restart")
 
-        calculator.restartTimeWindows()
+        calculator.restartWindowsForSegment()
 
-        XCTAssertLessThan(calculator.movingTimeSpan, 120,
-            "the neutral hold must re-arm at a segment restart")
-        XCTAssertNil(calculator.fastPace,
-            "the fast window must not report the previous segment's pace")
+        let tempoMps = 1609.34 / 560.0
+        for _ in 0..<60 {
+            elapsed += 1
+            distance += tempoMps
+            calculator.addSample(distance: distance, timestamp: start.addingTimeInterval(elapsed))
+        }
+
+        guard let fast = calculator.fastPace else { return XCTFail("no fast pace after restart") }
+        XCTAssertEqual(fast.totalSeconds, 560, accuracy: 30,
+            "carried distance must not inflate the post-restart pace (got \(fast.formatted))")
     }
 
     // MARK: - Window diagnostics
@@ -295,9 +325,8 @@ final class PaceWindowScopeTests: XCTestCase {
         XCTAssertEqual(d.masterWindowSeconds, 1609.34 / mps, accuracy: 20)
     }
 
-    /// Diagnostics must survive a segment restart the same way the pace does —
-    /// the master window keeps its span, the fast window is cut back.
-    func testDiagnosticsReflectTheSegmentRestartAsymmetry() {
+    /// Diagnostics track the restart: every span goes to zero together.
+    func testDiagnosticsGoToZeroOnASegmentRestart() {
         let start = Date()
         var elapsed = 0.0
         var distance = 0.0
@@ -309,13 +338,15 @@ final class PaceWindowScopeTests: XCTestCase {
         }
         let before = calculator.windowDiagnostics
         XCTAssertGreaterThan(before.fastWindowSamples, 100)
+        XCTAssertGreaterThan(before.masterWindowMeters, 1500)
 
-        calculator.restartTimeWindows()
+        calculator.restartWindowsForSegment()
         let after = calculator.windowDiagnostics
 
-        XCTAssertEqual(after.masterWindowMeters, before.masterWindowMeters, accuracy: 1,
-            "the rolling-mile window must be untouched by a segment restart")
-        XCTAssertLessThanOrEqual(after.fastWindowSamples, 1,
-            "the fast window must be cut back to the restart anchor")
+        XCTAssertEqual(after.sampleCount, 0)
+        XCTAssertEqual(after.masterWindowMeters, 0, accuracy: 0.001,
+            "the rolling-mile window restarts with the rest")
+        XCTAssertEqual(after.fastWindowSamples, 0)
+        XCTAssertEqual(after.movingTimeSpan, 0)
     }
 }

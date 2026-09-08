@@ -70,16 +70,6 @@ public final class PaceCalculator: PaceCalculatorProtocol {
     /// axis (absorbs the pause's distance) exactly once.
     private var awaitingResumeRebase: Bool = false
 
-    /// Moving-time instant the TIME-based windows measure from, set at a segment
-    /// transition. The distance-based master window deliberately ignores it.
-    ///
-    /// A segment change makes the previous segment's pace misleading for the
-    /// fast/medium windows, but the master window is a trailing-MILE readout —
-    /// it is not scoped to a segment and must keep spanning the boundary.
-    /// Clearing the whole sample history to reset the time windows also blanked
-    /// the master window, which then covered exactly the same data as the
-    /// current mile split and read identically to it for a full mile.
-    private var timeWindowAnchor: Date?
 
     // Debug: track previous pace values to detect large jumps
     private var previousFastPace: Pace?
@@ -139,8 +129,7 @@ public final class PaceCalculator: PaceCalculatorProtocol {
         let masterSeconds = (masterSamples.last?.timestamp ?? last.timestamp)
             .timeIntervalSince(masterSamples.first?.timestamp ?? last.timestamp)
 
-        var fastCutoff = last.timestamp.addingTimeInterval(-fastWindowSeconds)
-        if let anchor = timeWindowAnchor, anchor > fastCutoff { fastCutoff = anchor }
+        let fastCutoff = last.timestamp.addingTimeInterval(-fastWindowSeconds)
         let fastSamples = samples.filter { $0.timestamp >= fastCutoff }
 
         return PaceWindowDiagnostics(
@@ -161,8 +150,7 @@ public final class PaceCalculator: PaceCalculatorProtocol {
     /// signal for the windows themselves.
     public var movingTimeSpan: TimeInterval {
         guard let first = samples.first, let last = samples.last else { return 0 }
-        let from = max(first.timestamp, timeWindowAnchor ?? first.timestamp)
-        return max(0, last.timestamp.timeIntervalSince(from))
+        return max(0, last.timestamp.timeIntervalSince(first.timestamp))
     }
 
     // MARK: - Legacy Accessors (backward compatibility)
@@ -285,16 +273,27 @@ public final class PaceCalculator: PaceCalculatorProtocol {
         logPaceJumps(newFastPace: newFastPace)
     }
 
-    /// Restart the time-based windows at a segment boundary.
+    /// Restart EVERY pace window at a segment boundary, so the new segment
+    /// behaves like the start of a new run.
     ///
-    /// Use instead of `reset()` at a segment transition: the fast/medium windows
-    /// stop reporting the previous segment's pace and the neutral hold re-arms,
-    /// while the sample history the distance-based master (trailing-mile) window
-    /// depends on is preserved.
-    public func restartTimeWindows() {
-        timeWindowAnchor = samples.last?.timestamp
+    /// Clears the sample history, which restarts the distance-based master
+    /// (rolling-mile) window as well as the time-based ones. An earlier version
+    /// deliberately spared the master window on the theory that blanking it was
+    /// what made the rolling mile duplicate the mile split — that turned out to
+    /// be a display bug (`PaceWindows.splitPace` aliased `slowPace`), and
+    /// sparing it was measurably worse: across a 10:40 → 9:20 transition the
+    /// rolling mile needed a full mile (536 s) to flush the warm-up, and because
+    /// `cascadingVoiceAlert` consults the master window first it spent that mile
+    /// calling for "speed up" at 9:56 while the runner was already at 8:22.
+    ///
+    /// The moving-time and distance offsets and the last-accepted anchors are
+    /// preserved, so pause accounting stays continuous and the next sample
+    /// computes a normal delta rather than re-baselining.
+    public func restartWindowsForSegment() {
+        samples.removeAll()
         previousFastPace = nil
         previousMediumPace = nil
+        previousSlowPace = nil
     }
 
     public func notePauseGap(_ pauseDuration: TimeInterval) {
@@ -325,7 +324,6 @@ public final class PaceCalculator: PaceCalculatorProtocol {
         pauseOffset = 0
         distanceOffset = 0
         awaitingResumeRebase = false
-        timeWindowAnchor = nil
         previousFastPace = nil
         previousMediumPace = nil
         previousSlowPace = nil
@@ -356,9 +354,7 @@ public final class PaceCalculator: PaceCalculatorProtocol {
         guard !samples.isEmpty else { return nil }
 
         guard let lastSampleTime = samples.last?.timestamp else { return nil }
-        var cutoff = lastSampleTime.addingTimeInterval(-windowDuration)
-        // Never look back past a segment boundary.
-        if let anchor = timeWindowAnchor, anchor > cutoff { cutoff = anchor }
+        let cutoff = lastSampleTime.addingTimeInterval(-windowDuration)
         let windowSamples = samples.filter { $0.timestamp >= cutoff }
 
         guard windowSamples.count >= minSamples else { return nil }

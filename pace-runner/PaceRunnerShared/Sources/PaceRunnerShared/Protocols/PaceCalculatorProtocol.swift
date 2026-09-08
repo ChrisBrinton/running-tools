@@ -98,9 +98,9 @@ public protocol PaceCalculatorProtocol: AnyObject {
     /// look wrong (e.g. the rolling mile duplicating the current mile split).
     var windowDiagnostics: PaceWindowDiagnostics { get }
 
-    /// Restart the time-based windows at a segment boundary, preserving the
-    /// sample history the distance-based master window needs.
-    func restartTimeWindows()
+    /// Restart every pace window at a segment boundary so the new segment
+    /// behaves like the start of a new run.
+    func restartWindowsForSegment()
 
     /// Reset calculator state
     func reset()

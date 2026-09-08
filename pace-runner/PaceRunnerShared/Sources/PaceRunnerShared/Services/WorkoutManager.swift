@@ -1296,10 +1296,10 @@ public final class WorkoutManager: NSObject, WorkoutManagerProtocol {
         audioEngine.setEmphasisBeatsSuppressed(true)
         audioEngine.setEmphasisBeatMode(0)
 
-        // restartTimeWindows, NOT reset(): reset() also discards the sample
-        // history the distance-based master window needs, which blanked the
-        // rolling-mile readout so it duplicated the current mile split.
-        paceCalculator.restartTimeWindows()
+        // Restarts every window, master included: a large pace change makes the
+        // previous segment's history misleading for all of them, and the voice
+        // cues read the master window first.
+        paceCalculator.restartWindowsForSegment()
     }
 
     /// How long guidance holds neutral before it starts directing pace.
